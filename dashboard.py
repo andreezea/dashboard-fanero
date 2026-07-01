@@ -702,26 +702,44 @@ with tab2:
 
     # Filtros
     st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
-    t1,t2,t3,t4 = st.columns([1.8,2.2,2,2])
-    t_yr_all = sorted(df_tpf_base["Año"].unique())
-    sel_ty   = t1.multiselect("Año", t_yr_all, default=t_yr_all, key="t_yr")
-    t_mo_all = sorted(df_tpf_base[df_tpf_base["Año"].isin(sel_ty)]["Mes"].unique(),
-                      key=lambda x: pd.to_datetime(x,format="%b %Y"))
-    def_tm   = t_mo_all[-6:] if len(t_mo_all)>6 else t_mo_all
-    sel_tm   = t2.multiselect("Mes", t_mo_all, default=def_tm, key="t_mo")
-    cl_opts  = ["Todos"]+list(CLUSTERS.keys())
-    sel_cl   = t3.selectbox("Cluster", cl_opts, key="t_cl")
+    t1, t2, t3, t4 = st.columns([1.8, 2.2, 2, 2])
+
+    t_yr_all = sorted(df_tpf_base["Año"].unique(), reverse=True)
+    sel_ty   = t1.selectbox("📅 Año", t_yr_all, key="t_yr")
+
+    t_mo_all = ["Acumulado"] + sorted(
+        df_tpf_base[df_tpf_base["Año"]==sel_ty]["Mes"].unique(),
+        key=lambda x: pd.to_datetime(x, format="%b %Y"),
+    )
+    sel_tm_raw = t2.selectbox("🗓️ Mes", t_mo_all, key="t_mo")
+
+    cl_opts  = ["Todos"] + list(CLUSTERS.keys())
+    sel_cl   = t3.selectbox("🏪 Cluster", cl_opts, key="t_cl")
     sub_pool = ([s for ss in CLUSTERS.values() for s in ss]
                 if sel_cl=="Todos" else CLUSTERS[sel_cl])
     sel_sub  = t4.multiselect("Subcluster", sub_pool, default=sub_pool, key="t_sub")
 
-    # Productos a mostrar
-    sel_tpr = st.multiselect("Productos a mostrar en tabla",
-                              PRODUCTS_T, default=PRODUCTS_T, key="t_pr")
+    # Segmentación de productos — pills
+    sel_tpr = st.pills(
+        "🛒 Producto",
+        PRODUCTS_T,
+        selection_mode="multi",
+        default=PRODUCTS_T,
+        key="t_pr",
+    )
+    if not sel_tpr:
+        st.info("Selecciona al menos un producto.")
+        st.stop()
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # Convertir selección de mes a lista para filtrado
+    sel_tm = (
+        list(df_tpf_base[df_tpf_base["Año"]==sel_ty]["Mes"].unique())
+        if sel_tm_raw == "Acumulado" else [sel_tm_raw]
+    )
+
     # Filtrado
-    tmask = (df_tpf_base["Año"].isin(sel_ty) &
+    tmask = ((df_tpf_base["Año"]==sel_ty) &
              df_tpf_base["Mes"].isin(sel_tm) &
              df_tpf_base["Subcluster"].isin(sel_sub))
     if sel_cl!="Todos":
@@ -732,26 +750,11 @@ with tab2:
         st.warning("⚠️ Sin datos para la selección actual.")
         st.stop()
 
-    # KPIs
-    tv=df_tf["Ventas"].sum(); tc=df_tf["Cuota"].sum()
-    tp=tv/tc*100 if tc else 0
-
-    st.markdown('<div class="sec-title">📌 Indicadores Clave del Período</div>', unsafe_allow_html=True)
-    k1,k2,k3,k4 = st.columns(4)
-    k1.markdown(kpi("Ventas Totales",fmt(tv)),                           unsafe_allow_html=True)
-    k2.markdown(kpi("Cuota Total",fmt(tc)),                              unsafe_allow_html=True)
-    k3.markdown(kpi("% Cumplimiento",f"{tp:.1f}%",color=cc(tp)),        unsafe_allow_html=True)
-    k4.markdown(kpi("Subclusters",str(df_tf["Subcluster"].nunique()),
-                    color=C_NEUTRAL),                                    unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
     # ── TABLA PIVOTE PRINCIPAL ────────────────────────
     st.markdown('<div class="sec-title">📊 Tabla de Desempeño por Cluster y Subcluster</div>', unsafe_allow_html=True)
 
     df_tbl = df_tf[df_tf["Producto"].isin(sel_tpr)].copy()
 
-    # Mapa cluster → subclusters (respetando los filtros aplicados)
     active_map = {
         cl: [s for s in subs if s in sel_sub]
         for cl, subs in CLUSTERS.items()
@@ -766,43 +769,42 @@ with tab2:
             group_col = "Cluster",
             sub_col   = "Subcluster",
             group_map = active_map,
+            units     = True,
         )
         st.markdown(html_tpf, unsafe_allow_html=True)
     else:
         st.info("Selecciona al menos un producto para ver la tabla.")
 
-    # ── Gráficos complementarios ──────────────────────
-    with st.expander("📈 Ver gráficos de tendencia y comparativo", expanded=False):
+    st.markdown("<br>", unsafe_allow_html=True)
 
-        st.markdown('<div class="sec-title">Comparativo por Cluster</div>', unsafe_allow_html=True)
-        cl_agg = (df_tf.groupby("Cluster").agg(Ventas=("Ventas","sum"),Cuota=("Cuota","sum")).reset_index())
-        cl_agg["Cumpl"] = cl_agg["Ventas"]/cl_agg["Cuota"]*100
+    # ── GRÁFICO DE COLUMNAS ───────────────────────────
+    st.markdown('<div class="sec-title">📊 Gráfico de Columnas · Ventas vs Cuota por Cluster</div>', unsafe_allow_html=True)
 
-        fig_cl = make_subplots(specs=[[{"secondary_y":True}]])
-        fig_cl.add_trace(go.Bar(x=cl_agg["Cluster"],y=cl_agg["Cuota"],name="Cuota",marker_color=C_LIGHT),secondary_y=False)
-        fig_cl.add_trace(go.Bar(x=cl_agg["Cluster"],y=cl_agg["Ventas"],name="Ventas",marker_color=C_PRIMARY,opacity=.92),secondary_y=False)
-        fig_cl.add_trace(go.Scatter(x=cl_agg["Cluster"],y=cl_agg["Cumpl"],name="% Cumpl.",mode="lines+markers",
-                                     line=dict(color=C_ACCENT,width=2.5),marker=dict(size=8)),secondary_y=True)
-        fig_cl.add_hline(y=100,line_dash="dot",line_color=C_SUCCESS,secondary_y=True)
-        fig_cl.update_layout(**BASE_LAYOUT,height=320,barmode="overlay")
-        fig_cl.update_yaxes(title_text="Monto (S/)",secondary_y=False,tickformat=",.0f",gridcolor="#E8EDF2")
-        fig_cl.update_yaxes(title_text="Cumplimiento (%)",secondary_y=True,showgrid=False)
-        st.plotly_chart(fig_cl,use_container_width=True)
+    cl_agg = (df_tf.groupby("Cluster")
+                   .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum"))
+                   .reset_index())
+    cl_agg["Cumpl"] = cl_agg["Ventas"] / cl_agg["Cuota"] * 100
+    cl_agg = cl_agg.sort_values("Ventas", ascending=False)
 
-        st.markdown('<div class="sec-title">Tendencia Mensual</div>', unsafe_allow_html=True)
-        tr_t = (df_tf.groupby("Fecha").agg(Ventas=("Ventas","sum"),Cuota=("Cuota","sum"))
-                     .reset_index().sort_values("Fecha"))
-        tr_t["Cumpl"] = tr_t["Ventas"]/tr_t["Cuota"]*100
-        fig_t = make_subplots(specs=[[{"secondary_y":True}]])
-        fig_t.add_trace(go.Bar(x=tr_t["Fecha"],y=tr_t["Cuota"],name="Cuota",marker_color=C_LIGHT),secondary_y=False)
-        fig_t.add_trace(go.Bar(x=tr_t["Fecha"],y=tr_t["Ventas"],name="Ventas",marker_color=C_PRIMARY,opacity=.92),secondary_y=False)
-        fig_t.add_trace(go.Scatter(x=tr_t["Fecha"],y=tr_t["Cumpl"],name="% Cumpl.",mode="lines+markers",
-                                    line=dict(color=C_ACCENT,width=2.5),marker=dict(size=6)),secondary_y=True)
-        fig_t.add_hline(y=100,line_dash="dot",line_color=C_SUCCESS,secondary_y=True)
-        fig_t.update_layout(**BASE_LAYOUT,height=300,barmode="overlay")
-        fig_t.update_yaxes(title_text="Monto (S/)",secondary_y=False,tickformat=",.0f",gridcolor="#E8EDF2")
-        fig_t.update_yaxes(title_text="Cumplimiento (%)",secondary_y=True,showgrid=False)
-        st.plotly_chart(fig_t,use_container_width=True)
+    fig_col = go.Figure()
+    fig_col.add_trace(go.Bar(
+        x=cl_agg["Cluster"], y=cl_agg["Cuota"],
+        name="Cuota", marker_color=C_LIGHT,
+        text=cl_agg["Cuota"].apply(lambda v: f"{int(v):,}"),
+        textposition="outside", textfont=dict(size=10),
+    ))
+    fig_col.add_trace(go.Bar(
+        x=cl_agg["Cluster"], y=cl_agg["Ventas"],
+        name="Ventas", marker_color=C_PRIMARY, opacity=0.92,
+        text=[f"{c:.0f}%" for c in cl_agg["Cumpl"]],
+        textposition="inside", textfont=dict(color="white", size=11),
+    ))
+    fig_col.update_layout(
+        **BASE_LAYOUT, height=360, barmode="group",
+        yaxis=dict(title="Unidades", tickformat=",", gridcolor="#E8EDF2"),
+        xaxis=dict(tickangle=-15),
+    )
+    st.plotly_chart(fig_col, use_container_width=True)
 
 
 # ────────────────────────────────────────────────────
