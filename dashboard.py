@@ -314,13 +314,15 @@ BASE_LAYOUT = dict(
 # ── Pivot table builder ───────────────────────────────
 def build_pivot_html(df_data:pd.DataFrame, products:list[str],
                      group_col:str, sub_col:str|None,
-                     group_map:dict|None, units:bool=False) -> str:
+                     group_map:dict|None, units:bool=False,
+                     grand_total_label:str|None=None) -> str:
     """
     Construye una tabla HTML estilizada tipo gerencial.
-    group_col  : columna de agrupación principal (Cluster / Fanero)
-    sub_col    : columna de detalle (Subcluster / Departamento)
-    group_map  : dict grupo → [sub1, sub2, ...]  (para orden)
-    units      : True → mostrar enteros puros (sin símbolo monetario)
+    group_col         : columna de agrupación principal (Cluster)
+    sub_col           : columna de detalle (Subcluster / Departamento)
+    group_map         : dict grupo → [sub1, sub2, ...]  (para orden)
+    units             : True → enteros puros sin símbolo monetario
+    grand_total_label : si se indica (ej. "FANERO"), agrega fila gran total arriba
     """
     # Agregados nivel grupo
     grp_agg = (
@@ -338,6 +340,14 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
         )
         sub_agg["Cumpl"] = sub_agg["Ventas"]/sub_agg["Cuota"].replace(0,np.nan)*100
 
+    # Agregado gran total (suma de todos los grupos)
+    if grand_total_label:
+        gt_agg = (
+            df_data.groupby("Producto",as_index=False)
+                   .agg(Ventas=("Ventas","sum"),Cuota=("Cuota","sum"))
+        )
+        gt_agg["Cumpl"] = gt_agg["Ventas"]/gt_agg["Cuota"].replace(0,np.nan)*100
+
     def row_vals(df, filters:dict, prod:str):
         mask = pd.Series([True]*len(df), index=df.index)
         for col,val in filters.items():
@@ -346,7 +356,17 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
         if r.empty: return None,None,None
         return r["Cuota"].iat[0], r["Ventas"].iat[0], r["Cumpl"].iat[0]
 
+    def row_vals_simple(df, prod:str):
+        r = df[df["Producto"]==prod]
+        if r.empty: return None,None,None
+        return r["Cuota"].iat[0], r["Ventas"].iat[0], r["Cumpl"].iat[0]
+
     def _f(v): return fmt_tbl(v, units=units)
+
+    def _cumpl_td(pct, extra_style=""):
+        if pct is None or (isinstance(pct,float) and np.isnan(pct)):
+            return '<td class="td-cumpl">–</td>'
+        return f'<td class="td-cumpl" style="color:{cc(pct)};{extra_style}">{pct:.0f}%</td>'
 
     # ── HTML ──────────────────────────────────────────
     H = ['<div class="pivot-wrap"><table class="pivot-tbl">']
@@ -363,6 +383,17 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
                  '<th class="th-sub">Cumpl%</th>')
     H.append('</tr></thead><tbody>')
 
+    # ── Fila gran total (Fanero) ──────────────────────
+    if grand_total_label:
+        H.append('<tr class="tr-cluster" style="background:#0D2447;border-bottom:3px solid #F4D03F">')
+        H.append(f'<td class="td-first" style="font-size:.85rem;letter-spacing:.3px">'
+                 f'🏆 {grand_total_label}</td>')
+        for p in products:
+            c,v,pct = row_vals_simple(gt_agg, p)
+            H.append(f'<td class="td-num">{_f(c)}</td><td class="td-num">{_f(v)}</td>')
+            H.append(_cumpl_td(pct, "font-size:.85rem"))
+        H.append('</tr>')
+
     groups = list(group_map.keys()) if group_map else grp_agg[group_col].unique()
 
     for grp in groups:
@@ -373,10 +404,7 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
             c,v,pct = row_vals(grp_agg,{group_col:grp},p)
             H.append(f'<td class="td-num">{_f(c)}</td>'
                      f'<td class="td-num">{_f(v)}</td>')
-            if pct is not None:
-                H.append(f'<td class="td-cumpl" style="color:{cc(pct)}">{pct:.0f}%</td>')
-            else:
-                H.append('<td class="td-cumpl">–</td>')
+            H.append(_cumpl_td(pct))
         H.append('</tr>')
 
         # ── Filas de subgrupos ────────────────────────
@@ -390,10 +418,7 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
                     c,v,pct = row_vals(sub_agg,{group_col:grp,sub_col:sub},p)
                     H.append(f'<td class="td-num">{_f(c)}</td>'
                              f'<td class="td-num">{_f(v)}</td>')
-                    if pct is not None:
-                        H.append(f'<td class="td-cumpl" style="color:{cc(pct)}">{pct:.0f}%</td>')
-                    else:
-                        H.append('<td class="td-cumpl">–</td>')
+                    H.append(_cumpl_td(pct))
                 H.append('</tr>')
 
     H.append('</tbody></table></div>')
@@ -764,12 +789,13 @@ with tab2:
 
     if not df_tbl.empty and sel_tpr:
         html_tpf = build_pivot_html(
-            df_data   = df_tbl,
-            products  = sel_tpr,
-            group_col = "Cluster",
-            sub_col   = "Subcluster",
-            group_map = active_map,
-            units     = True,
+            df_data           = df_tbl,
+            products          = sel_tpr,
+            group_col         = "Cluster",
+            sub_col           = "Subcluster",
+            group_map         = active_map,
+            units             = True,
+            grand_total_label = "FANERO",
         )
         st.markdown(html_tpf, unsafe_allow_html=True)
     else:
