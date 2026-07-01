@@ -400,11 +400,11 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
     return "".join(H)
 
 
-# ── Plantillas Excel ──────────────────────────────────
+# ── Plantillas CSV (sin dependencia de openpyxl) ─────
 def make_template(cols:list[str], sample_rows:list[dict]) -> bytes:
-    buf = io.BytesIO()
-    pd.DataFrame(sample_rows, columns=cols).to_excel(buf, index=False, engine="openpyxl")
-    return buf.getvalue()
+    buf = io.StringIO()
+    pd.DataFrame(sample_rows, columns=cols).to_csv(buf, index=False)
+    return buf.getvalue().encode("utf-8")
 
 TMPL_MAY = make_template(COLS_MAY, [
     {"Fecha":"2024-01-01","Departamento":"Amazonas","Producto":"Prepago",    "Ventas":15000,"Cuota":18000},
@@ -419,8 +419,15 @@ TMPL_TPF = make_template(COLS_TPF, [
 
 def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
     try:
-        df = pd.read_csv(file) if file.name.endswith(".csv") else \
-             pd.read_excel(file, engine="openpyxl")
+        if file.name.endswith(".csv"):
+            df = pd.read_csv(file)
+        else:
+            try:
+                import openpyxl  # noqa
+                df = pd.read_excel(file, engine="openpyxl")
+            except ModuleNotFoundError:
+                st.sidebar.error("⚠️ openpyxl no disponible. Sube el archivo en formato CSV.")
+                return None
         df.columns = df.columns.str.strip()
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
@@ -452,8 +459,8 @@ with st.sidebar:
                                  type=["xlsx","csv"], key="up_may",
                                  help=f"Columnas requeridas: {', '.join(COLS_MAY)}")
     st.download_button("⬇️ Descargar plantilla Mayoristas", TMPL_MAY,
-                        "plantilla_mayoristas.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "plantilla_mayoristas.csv",
+                        mime="text/csv",
                         key="dl_may")
 
     st.markdown("---")
@@ -462,8 +469,8 @@ with st.sidebar:
                                   type=["xlsx","csv"], key="up_tpf",
                                   help=f"Columnas requeridas: {', '.join(COLS_TPF)}")
     st.download_button("⬇️ Descargar plantilla TPF", TMPL_TPF,
-                        "plantilla_tpf.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "plantilla_tpf.csv",
+                        mime="text/csv",
                         key="dl_tpf")
 
     st.markdown("---")
