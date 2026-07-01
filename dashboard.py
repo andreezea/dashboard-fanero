@@ -200,8 +200,17 @@ CLUSTERS: dict[str, list[str]] = {
 PRODUCTS_T = ["SS","LLAA","C PORTA SS","EQUIPOS TOTAL","RENO SS",
                "VR + PORTA OPP","PREPAGO","ACCE","SEGUROS","MISS IN"]
 
+TEX_LOCATIONS = [
+    "Tex Presidente - Huancayo",
+    "Tex Callería",
+    "Tex Juanjui",
+    "Tex Gran vía",
+    "Tex Yarinacocha",
+]
+
 COLS_MAY = ["Fecha","Departamento","Producto","Ventas","Cuota"]
 COLS_TPF = ["Fecha","Cluster","Subcluster","Producto","Ventas","Cuota"]
+COLS_TEX = ["Fecha","Lugar","Producto","Ventas","Cuota"]
 
 # ══════════════════════════════════════════════════════
 # GENERACIÓN DE DATOS SIMULADOS
@@ -265,6 +274,38 @@ def generate_tpf() -> pd.DataFrame:
                     rows.append({"Fecha":m,"Mes":m.strftime("%b %Y"),"Año":m.year,
                                   "Cluster":cluster,"Subcluster":sub,"Producto":prod,
                                   "Ventas":round(v),"Cuota":round(c)})
+    df = pd.DataFrame(rows)
+    df["Cumplimiento"] = (df["Ventas"]/df["Cuota"]*100).round(1)
+    return df
+
+
+@st.cache_data(show_spinner=False)
+def generate_tex() -> pd.DataFrame:
+    """Genera datos en UNIDADES para las tiendas TEX."""
+    np.random.seed(13)
+    months = pd.date_range("2023-01-01","2026-06-01",freq="MS")
+    base = {
+        "Tex Presidente - Huancayo": 98,
+        "Tex Callería":              82,
+        "Tex Juanjui":               56,
+        "Tex Gran vía":              71,
+        "Tex Yarinacocha":           67,
+    }
+    pmix_t = {"SS":.22,"LLAA":.15,"C PORTA SS":.12,"EQUIPOS TOTAL":.10,
+               "RENO SS":.09,"VR + PORTA OPP":.08,"PREPAGO":.07,
+               "ACCE":.07,"SEGUROS":.05,"MISS IN":.05}
+    rows = []
+    for m in months:
+        elapsed  = (m.year-2023)*12 + m.month-1
+        trend    = 1 + .004*elapsed
+        seasonal = 1 + .07*np.sin(2*np.pi*m.month/12)
+        for loc in TEX_LOCATIONS:
+            for prod,mix in pmix_t.items():
+                v = max(base[loc]*mix*trend*seasonal*np.random.normal(1,.07), 0)
+                c = max(v*np.random.uniform(.88,1.22), 0)
+                rows.append({"Fecha":m,"Mes":m.strftime("%b %Y"),"Año":m.year,
+                              "Lugar":loc,"Producto":prod,
+                              "Ventas":round(v),"Cuota":round(c)})
     df = pd.DataFrame(rows)
     df["Cumplimiento"] = (df["Ventas"]/df["Cuota"]*100).round(1)
     return df
@@ -441,6 +482,11 @@ TMPL_TPF = make_template(COLS_TPF, [
     {"Fecha":"2024-01-01","Cluster":"PUCALLPA",  "Subcluster":"TPF PUCALLPA", "Producto":"LLAA", "Ventas":8000,"Cuota":7500},
     {"Fecha":"2024-02-01","Cluster":"IQUITOS",   "Subcluster":"TPF IQUITOS",  "Producto":"SS",   "Ventas":5500,"Cuota":6000},
 ])
+TMPL_TEX = make_template(COLS_TEX, [
+    {"Fecha":"2024-01-01","Lugar":"Tex Callería",              "Producto":"SS",   "Ventas":18,"Cuota":20},
+    {"Fecha":"2024-01-01","Lugar":"Tex Presidente - Huancayo", "Producto":"LLAA", "Ventas":14,"Cuota":15},
+    {"Fecha":"2024-02-01","Lugar":"Tex Juanjui",               "Producto":"SS",   "Ventas":10,"Cuota":12},
+])
 
 def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
     try:
@@ -499,12 +545,21 @@ with st.sidebar:
                         key="dl_tpf")
 
     st.markdown("---")
+    st.markdown("### 🏪 TEX")
+    tex_file = st.file_uploader("Archivo TEX (.xlsx / .csv)",
+                                 type=["xlsx","csv"], key="up_tex",
+                                 help=f"Columnas requeridas: {', '.join(COLS_TEX)}")
+    st.download_button("⬇️ Descargar plantilla TEX", TMPL_TEX,
+                        "plantilla_tex.csv", mime="text/csv", key="dl_tex")
+
+    st.markdown("---")
     st.caption("ℹ️ Los datos cargados se mantienen mientras la sesión esté activa.")
 
     # Indicador de estado
     may_status = "✅ Datos reales" if may_file else "🔵 Datos demo"
     tpf_status = "✅ Datos reales" if tpf_file else "🔵 Datos demo"
-    st.markdown(f"**Mayoristas:** {may_status}  \n**TPF:** {tpf_status}")
+    tex_status = "✅ Datos reales" if tex_file else "🔵 Datos demo"
+    st.markdown(f"**Mayoristas:** {may_status}  \n**TPF:** {tpf_status}  \n**TEX:** {tex_status}")
 
 
 # ══════════════════════════════════════════════════════
@@ -512,6 +567,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════
 df_may_base = generate_mayoristas()
 df_tpf_base = generate_tpf()
+df_tex_base = generate_tex()
 
 if may_file:
     _up = load_uploaded(may_file, COLS_MAY)
@@ -529,6 +585,12 @@ if tpf_file:
     if _up is not None:
         df_tpf_base = _up
         st.sidebar.success("TPF cargado correctamente ✓")
+
+if tex_file:
+    _up = load_uploaded(tex_file, COLS_TEX)
+    if _up is not None:
+        df_tex_base = _up
+        st.sidebar.success("TEX cargado correctamente ✓")
 
 
 # ══════════════════════════════════════════════════════
@@ -549,7 +611,7 @@ st.markdown(f"""
 # ══════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════
-tab1, tab2, tab3 = st.tabs(["🏬  MAYORISTAS","🏪  TPF","🏛️  CONGRESO"])
+tab1, tab2, tab3 = st.tabs(["🏬  MAYORISTAS","🏪  TPF","🏪  TEX"])
 
 
 # ────────────────────────────────────────────────────
@@ -834,14 +896,93 @@ with tab2:
 
 
 # ────────────────────────────────────────────────────
-# TAB 3 · CONGRESO
+# TAB 3 · TEX
 # ────────────────────────────────────────────────────
 with tab3:
-    st.markdown("""
-    <div class="congress-wrap">
-      <div style="font-size:4.5rem;margin-bottom:1rem">🏛️</div>
-      <h2>Información en proceso de carga</h2>
-      <p>Los datos del módulo Congreso estarán disponibles próximamente.<br>
-         Por favor, vuelva a consultar en la próxima actualización.</p>
-    </div>
-    """, unsafe_allow_html=True)
+
+    # ── Filtros ────────────────────────────────────────
+    st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
+    x1, x2, x3 = st.columns([2, 2.5, 3])
+
+    x_yr_all = sorted(df_tex_base["Año"].unique(), reverse=True)
+    sel_xy   = x1.selectbox("📅 Año", x_yr_all, key="x_yr")
+
+    x_mo_all = ["Acumulado"] + sorted(
+        df_tex_base[df_tex_base["Año"]==sel_xy]["Mes"].unique(),
+        key=lambda m: pd.to_datetime(m, format="%b %Y"),
+    )
+    sel_xm_raw = x2.selectbox("🗓️ Mes", x_mo_all, key="x_mo")
+
+    sel_xloc = x3.multiselect(
+        "📍 Tienda", TEX_LOCATIONS, default=TEX_LOCATIONS, key="x_loc"
+    )
+
+    sel_xpr = st.pills(
+        "🛒 Producto", PRODUCTS_T,
+        selection_mode="multi", default=PRODUCTS_T, key="x_pr",
+    )
+    if not sel_xpr or not sel_xloc:
+        st.info("Selecciona al menos una tienda y un producto.")
+        st.stop()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Filtrado ───────────────────────────────────────
+    sel_xm = (
+        list(df_tex_base[df_tex_base["Año"]==sel_xy]["Mes"].unique())
+        if sel_xm_raw == "Acumulado" else [sel_xm_raw]
+    )
+    df_tx = df_tex_base[
+        (df_tex_base["Año"]==sel_xy) &
+        df_tex_base["Mes"].isin(sel_xm) &
+        df_tex_base["Lugar"].isin(sel_xloc) &
+        df_tex_base["Producto"].isin(sel_xpr)
+    ].copy()
+
+    if df_tx.empty:
+        st.warning("⚠️ Sin datos para la selección actual.")
+        st.stop()
+
+    # ── TABLA PIVOTE ───────────────────────────────────
+    st.markdown('<div class="sec-title">📊 Tabla de Desempeño TEX</div>', unsafe_allow_html=True)
+
+    html_tex = build_pivot_html(
+        df_data           = df_tx,
+        products          = list(sel_xpr),
+        group_col         = "Lugar",
+        sub_col           = None,
+        group_map         = {loc: [] for loc in TEX_LOCATIONS if loc in sel_xloc},
+        units             = True,
+        grand_total_label = "FANERO",
+    )
+    st.markdown(html_tex, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── GRÁFICO DE COLUMNAS ───────────────────────────
+    st.markdown('<div class="sec-title">📊 Gráfico de Columnas · Ventas vs Cuota por Tienda</div>', unsafe_allow_html=True)
+
+    loc_agg = (df_tx.groupby("Lugar")
+                    .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum"))
+                    .reset_index())
+    loc_agg["Cumpl"] = loc_agg["Ventas"] / loc_agg["Cuota"] * 100
+    loc_agg = loc_agg.sort_values("Ventas", ascending=False)
+
+    fig_tex = go.Figure()
+    fig_tex.add_trace(go.Bar(
+        x=loc_agg["Lugar"], y=loc_agg["Cuota"],
+        name="Cuota", marker_color=C_LIGHT,
+        text=loc_agg["Cuota"].apply(lambda v: f"{int(v):,}"),
+        textposition="outside", textfont=dict(size=10),
+    ))
+    fig_tex.add_trace(go.Bar(
+        x=loc_agg["Lugar"], y=loc_agg["Ventas"],
+        name="Ventas", marker_color=C_PRIMARY, opacity=0.92,
+        text=[f"{c:.0f}%" for c in loc_agg["Cumpl"]],
+        textposition="inside", textfont=dict(color="white", size=11),
+    ))
+    fig_tex.update_layout(
+        **BASE_LAYOUT, height=360, barmode="group",
+        yaxis=dict(title="Unidades", tickformat=",", gridcolor="#E8EDF2"),
+        xaxis=dict(tickangle=-15),
+    )
+    st.plotly_chart(fig_tex, use_container_width=True)
