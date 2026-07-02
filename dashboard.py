@@ -352,6 +352,37 @@ BASE_LAYOUT = dict(
     hoverlabel=dict(bgcolor="white",font_size=12,bordercolor="#ddd"),
 )
 
+def render_trend(df_src: pd.DataFrame, height:int=320) -> None:
+    """Gráfico de tendencia mensual reutilizable (Ventas vs Cuota + % Cumpl.)."""
+    tr = (df_src.groupby("Fecha")
+                .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum"))
+                .reset_index().sort_values("Fecha"))
+    tr["Cumpl"] = tr["Ventas"] / tr["Cuota"] * 100
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Bar(
+        x=tr["Fecha"], y=tr["Cuota"],
+        name="Cuota", marker_color=C_LIGHT, opacity=0.85,
+    ), secondary_y=False)
+    fig.add_trace(go.Bar(
+        x=tr["Fecha"], y=tr["Ventas"],
+        name="Ventas", marker_color=C_PRIMARY, opacity=0.92,
+    ), secondary_y=False)
+    fig.add_trace(go.Scatter(
+        x=tr["Fecha"], y=tr["Cumpl"],
+        name="% Cumpl.", mode="lines+markers",
+        line=dict(color=C_ACCENT, width=2.5),
+        marker=dict(size=6, color=C_ACCENT),
+    ), secondary_y=True)
+    fig.add_hline(y=100, line_dash="dot", line_color=C_SUCCESS, secondary_y=True,
+                  annotation_text=" Meta 100%", annotation_position="top right",
+                  annotation_font_color=C_SUCCESS)
+    fig.update_layout(**BASE_LAYOUT, height=height, barmode="overlay")
+    fig.update_yaxes(title_text="Unidades", secondary_y=False,
+                     tickformat=",", gridcolor="#E8EDF2")
+    fig.update_yaxes(title_text="Cumplimiento (%)", secondary_y=True, showgrid=False)
+    st.plotly_chart(fig, use_container_width=True)
+
 # ── Pivot table builder ───────────────────────────────
 def build_pivot_html(df_data:pd.DataFrame, products:list[str],
                      group_col:str, sub_col:str|None,
@@ -721,6 +752,10 @@ with tab1:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── GRÁFICOS ───────────────────────────────────────
+    # ── TENDENCIA MENSUAL ──────────────────────────────
+    st.markdown('<div class="sec-title">📈 Tendencia Mensual · Ventas vs Cuota</div>', unsafe_allow_html=True)
+    render_trend(df_base)
+
     gc1, gc2 = st.columns([3, 2])
 
     # Gráfico de columnas — Ventas vs Cuota por Departamento
@@ -865,6 +900,10 @@ with tab2:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── TENDENCIA MENSUAL ──────────────────────────────
+    st.markdown('<div class="sec-title">📈 Tendencia Mensual · Ventas vs Cuota</div>', unsafe_allow_html=True)
+    render_trend(df_tf)
+
     # ── GRÁFICO DE COLUMNAS ───────────────────────────
     st.markdown('<div class="sec-title">📊 Gráfico de Columnas · Ventas vs Cuota por Cluster</div>', unsafe_allow_html=True)
 
@@ -957,6 +996,10 @@ with tab3:
     st.markdown(html_tex, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── TENDENCIA MENSUAL ──────────────────────────────
+    st.markdown('<div class="sec-title">📈 Tendencia Mensual · Ventas vs Cuota</div>', unsafe_allow_html=True)
+    render_trend(df_tx)
 
     # ── GRÁFICO DE COLUMNAS ───────────────────────────
     st.markdown('<div class="sec-title">📊 Gráfico de Columnas · Ventas vs Cuota por Tienda</div>', unsafe_allow_html=True)
