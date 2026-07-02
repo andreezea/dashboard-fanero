@@ -353,20 +353,24 @@ BASE_LAYOUT = dict(
 )
 
 def render_trend(df_src: pd.DataFrame, height:int=320) -> None:
-    """Gráfico de tendencia mensual reutilizable (Ventas vs Cuota + % Cumpl.)."""
+    """Gráfico de tendencia mensual lineal (Ventas, Cuota y % Cumpl.)."""
     tr = (df_src.groupby("Fecha")
                 .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum"))
                 .reset_index().sort_values("Fecha"))
     tr["Cumpl"] = tr["Ventas"] / tr["Cuota"] * 100
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Bar(
+    fig.add_trace(go.Scatter(
         x=tr["Fecha"], y=tr["Cuota"],
-        name="Cuota", marker_color=C_LIGHT, opacity=0.85,
+        name="Cuota", mode="lines+markers",
+        line=dict(color=C_LIGHT, width=2, dash="dot"),
+        marker=dict(size=5, color=C_LIGHT),
     ), secondary_y=False)
-    fig.add_trace(go.Bar(
+    fig.add_trace(go.Scatter(
         x=tr["Fecha"], y=tr["Ventas"],
-        name="Ventas", marker_color=C_PRIMARY, opacity=0.92,
+        name="Ventas", mode="lines+markers",
+        line=dict(color=C_PRIMARY, width=2.5),
+        marker=dict(size=6, color=C_PRIMARY),
     ), secondary_y=False)
     fig.add_trace(go.Scatter(
         x=tr["Fecha"], y=tr["Cumpl"],
@@ -377,7 +381,7 @@ def render_trend(df_src: pd.DataFrame, height:int=320) -> None:
     fig.add_hline(y=100, line_dash="dot", line_color=C_SUCCESS, secondary_y=True,
                   annotation_text=" Meta 100%", annotation_position="top right",
                   annotation_font_color=C_SUCCESS)
-    fig.update_layout(**BASE_LAYOUT, height=height, barmode="overlay")
+    fig.update_layout(**BASE_LAYOUT, height=height)
     fig.update_yaxes(title_text="Unidades", secondary_y=False,
                      tickformat=",", gridcolor="#E8EDF2")
     fig.update_yaxes(title_text="Cumplimiento (%)", secondary_y=True, showgrid=False)
