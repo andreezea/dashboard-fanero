@@ -111,15 +111,30 @@ st.markdown(f"""
 }}
 
 /* ══ PIVOT TABLE ══════════════════════════════════════ */
-.pivot-wrap {{ overflow-x:auto; border-radius:9px; box-shadow:0 2px 10px rgba(0,0,0,.1); }}
-.pivot-tbl  {{ border-collapse:collapse; width:100%; font-size:.8rem; font-family:Inter,Arial,sans-serif; white-space:nowrap; }}
+.pivot-wrap {{
+  overflow-x:auto !important;
+  -webkit-overflow-scrolling:touch;
+  border-radius:9px;
+  box-shadow:0 2px 10px rgba(0,0,0,.1);
+  position:relative;
+}}
+.pivot-tbl  {{
+  border-collapse:collapse;
+  width:auto;           /* no stretching — desborda y activa el scroll */
+  min-width:100%;       /* rellena si el contenido es angosto              */
+  font-size:.8rem;
+  font-family:Inter,Arial,sans-serif;
+  white-space:nowrap;
+}}
 
 /* Header rows */
 .pivot-tbl .th-first {{
   background:{C_PRIMARY}; color:#fff; text-align:left;
   padding:.55rem .9rem; border:1px solid #2D5A9E;
   font-weight:700; font-size:.78rem; text-transform:uppercase;
-  letter-spacing:.5px; min-width:190px; position:sticky; left:0; z-index:2;
+  letter-spacing:.5px; min-width:160px;
+  position:sticky; left:0; z-index:3;
+  box-shadow:2px 0 5px rgba(0,0,0,.18);
 }}
 .pivot-tbl .th-prod {{
   background:{C_PRIMARY}; color:#fff; text-align:center;
@@ -146,7 +161,8 @@ st.markdown(f"""
 .pivot-tbl .tr-cluster .td-first {{
   background:{C_PRIMARY}; color:{C_YELLOW};
   text-align:left; padding:.45rem .9rem;
-  font-weight:700; position:sticky; left:0; z-index:1;
+  font-weight:700; position:sticky; left:0; z-index:2;
+  box-shadow:2px 0 5px rgba(0,0,0,.18);
 }}
 .pivot-tbl .tr-cluster .td-num {{
   text-align:center; padding:.4rem .35rem;
@@ -160,11 +176,14 @@ st.markdown(f"""
 .pivot-tbl .tr-sub:nth-child(even) td {{ background:#F7FAFC; }}
 .pivot-tbl .tr-sub:hover td {{ background:#E8EDF5; }}
 .pivot-tbl .tr-sub .td-first {{
-  text-align:left; padding:.38rem .9rem .38rem 1.8rem;
+  text-align:left; padding:.38rem .9rem .38rem 1.2rem;
   font-weight:500; color:{C_PRIMARY};
-  background:inherit; position:sticky; left:0; z-index:1;
+  background:#fff; position:sticky; left:0; z-index:2;
+  box-shadow:2px 0 5px rgba(0,0,0,.10);
   border-right:2px solid #D0D9E8;
 }}
+/* fila par — mantener fondo en celda sticky */
+.pivot-tbl .tr-sub:nth-child(even) .td-first {{ background:#F7FAFC; }}
 .pivot-tbl .tr-sub .td-num   {{ text-align:center; padding:.35rem .3rem; color:#34495E; }}
 .pivot-tbl .tr-sub .td-cumpl {{ text-align:center; padding:.35rem .3rem; font-weight:700; font-size:.82rem; }}
 
