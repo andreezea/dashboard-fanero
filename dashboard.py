@@ -504,7 +504,8 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
 # ── Plantillas CSV (sin dependencia de openpyxl) ─────
 def make_template(cols:list[str], sample_rows:list[dict]) -> bytes:
     buf = io.StringIO()
-    pd.DataFrame(sample_rows, columns=cols).to_csv(buf, index=False)
+    # sep=";" → Excel en español abre las columnas separadas correctamente
+    pd.DataFrame(sample_rows, columns=cols).to_csv(buf, index=False, sep=";")
     return buf.getvalue().encode("utf-8")
 
 TMPL_MAY = make_template(COLS_MAY, [
@@ -526,7 +527,7 @@ TMPL_TEX = make_template(COLS_TEX, [
 def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
     try:
         if file.name.endswith(".csv"):
-            df = pd.read_csv(file)
+            df = pd.read_csv(file, sep=None, engine="python")  # detecta ; o , automático
         else:
             try:
                 import openpyxl  # noqa
