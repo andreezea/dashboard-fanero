@@ -556,46 +556,66 @@ def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
 # ══════════════════════════════════════════════════════
 # SIDEBAR — CARGA DE DATOS
 # ══════════════════════════════════════════════════════
+# Inicializar estado de sesión admin
+if "admin_ok" not in st.session_state:
+    st.session_state.admin_ok = False
+
+may_file = tpf_file = tex_file = None   # por defecto sin archivos
+
 with st.sidebar:
-    st.markdown(f"## 📂 Cargar Datos Reales")
-    st.caption("Sube tu Excel o CSV para reemplazar los datos de demo.")
-
+    st.markdown("## 🔐 Administrador")
     st.markdown("---")
-    st.markdown("### 🏬 Mayoristas")
-    may_file = st.file_uploader("Archivo Mayoristas (.xlsx / .csv)",
-                                 type=["xlsx","csv"], key="up_may",
-                                 help=f"Columnas requeridas: {', '.join(COLS_MAY)}")
-    st.download_button("⬇️ Descargar plantilla Mayoristas", TMPL_MAY,
-                        "plantilla_mayoristas.csv",
-                        mime="text/csv",
-                        key="dl_may")
 
-    st.markdown("---")
-    st.markdown("### 🏪 TPF")
-    tpf_file = st.file_uploader("Archivo TPF (.xlsx / .csv)",
-                                  type=["xlsx","csv"], key="up_tpf",
-                                  help=f"Columnas requeridas: {', '.join(COLS_TPF)}")
-    st.download_button("⬇️ Descargar plantilla TPF", TMPL_TPF,
-                        "plantilla_tpf.csv",
-                        mime="text/csv",
-                        key="dl_tpf")
+    if not st.session_state.admin_ok:
+        # ── Formulario de acceso ──────────────────────
+        adm_user = st.text_input("Usuario", key="adm_user",
+                                  placeholder="Ingresa tu usuario")
+        adm_pwd  = st.text_input("Contraseña", type="password", key="adm_pwd",
+                                  placeholder="Ingresa tu contraseña")
+        if st.button("🔓 Ingresar", key="adm_btn", use_container_width=True):
+            if adm_user == "admin" and adm_pwd == "admin2025":
+                st.session_state.admin_ok = True
+                st.rerun()
+            else:
+                st.error("Usuario o contraseña incorrectos.")
+        st.caption("Solo el administrador puede cargar datos.")
 
-    st.markdown("---")
-    st.markdown("### 🏪 TEX")
-    tex_file = st.file_uploader("Archivo TEX (.xlsx / .csv)",
-                                 type=["xlsx","csv"], key="up_tex",
-                                 help=f"Columnas requeridas: {', '.join(COLS_TEX)}")
-    st.download_button("⬇️ Descargar plantilla TEX", TMPL_TEX,
-                        "plantilla_tex.csv", mime="text/csv", key="dl_tex")
+    else:
+        # ── Panel de carga (solo admin) ───────────────
+        st.success("✅ Sesión activa · admin")
+        if st.button("🔒 Cerrar sesión", key="adm_logout", use_container_width=True):
+            st.session_state.admin_ok = False
+            st.rerun()
 
-    st.markdown("---")
-    st.caption("ℹ️ Los datos cargados se mantienen mientras la sesión esté activa.")
+        st.markdown("---")
+        st.markdown("### 🏬 Mayoristas")
+        may_file = st.file_uploader("Archivo Mayoristas (.xlsx / .csv)",
+                                     type=["xlsx","csv"], key="up_may",
+                                     help=f"Columnas: {', '.join(COLS_MAY)}")
+        st.download_button("⬇️ Plantilla Mayoristas", TMPL_MAY,
+                            "plantilla_mayoristas.csv", mime="text/csv", key="dl_may")
 
-    # Indicador de estado
-    may_status = "✅ Datos reales" if may_file else "🔵 Datos demo"
-    tpf_status = "✅ Datos reales" if tpf_file else "🔵 Datos demo"
-    tex_status = "✅ Datos reales" if tex_file else "🔵 Datos demo"
-    st.markdown(f"**Mayoristas:** {may_status}  \n**TPF:** {tpf_status}  \n**TEX:** {tex_status}")
+        st.markdown("---")
+        st.markdown("### 🏪 TPF")
+        tpf_file = st.file_uploader("Archivo TPF (.xlsx / .csv)",
+                                      type=["xlsx","csv"], key="up_tpf",
+                                      help=f"Columnas: {', '.join(COLS_TPF)}")
+        st.download_button("⬇️ Plantilla TPF", TMPL_TPF,
+                            "plantilla_tpf.csv", mime="text/csv", key="dl_tpf")
+
+        st.markdown("---")
+        st.markdown("### 🏪 TEX")
+        tex_file = st.file_uploader("Archivo TEX (.xlsx / .csv)",
+                                     type=["xlsx","csv"], key="up_tex",
+                                     help=f"Columnas: {', '.join(COLS_TEX)}")
+        st.download_button("⬇️ Plantilla TEX", TMPL_TEX,
+                            "plantilla_tex.csv", mime="text/csv", key="dl_tex")
+
+        st.markdown("---")
+        may_status = "✅ Reales" if may_file else "🔵 Demo"
+        tpf_status = "✅ Reales" if tpf_file else "🔵 Demo"
+        tex_status = "✅ Reales" if tex_file else "🔵 Demo"
+        st.caption(f"Mayoristas: {may_status} · TPF: {tpf_status} · TEX: {tex_status}")
 
 
 # ══════════════════════════════════════════════════════
@@ -792,29 +812,38 @@ with tab1:
         )
         st.plotly_chart(fig_col, use_container_width=True)
 
-    # Gráfico circular — Mix de ventas por Producto
+    # Gráfico circular — Prepago por Departamento
     with gc2:
-        st.markdown('<div class="sec-title">🥧 Mix de Ventas por Producto</div>', unsafe_allow_html=True)
-        pa = (df_base.groupby("Producto")
+        st.markdown('<div class="sec-title">🥧 Prepago por Departamento</div>', unsafe_allow_html=True)
+        df_prep = df_may_base[
+            (df_may_base["Año"]==sel_yr) &
+            (df_may_base["Producto"]=="Prepago") &
+            (df_may_base["Departamento"]!="Fanero") &
+            (df_may_base["Mes"].isin(
+                list(df_may_base[df_may_base["Año"]==sel_yr]["Mes"].unique())
+                if sel_mo=="Acumulado" else [sel_mo]
+            ))
+        ]
+        pa = (df_prep.groupby("Departamento")
                      .agg(Ventas=("Ventas","sum"))
                      .reset_index())
+        dep_colors = [C_PRIMARY, C_SECONDARY, "#2E86C1", "#4A90D9",
+                      "#7EB3E2", "#A9CCE3", "#1A5276", "#154360", "#5DADE2"]
         fig_pie = go.Figure(go.Pie(
-            labels=pa["Producto"],
+            labels=pa["Departamento"],
             values=pa["Ventas"],
             hole=0.46,
-            marker=dict(
-                colors=[C_PRIMARY, C_SECONDARY, "#4A90D9", "#7EB3E2"],
-                line=dict(color="white", width=2),
-            ),
+            marker=dict(colors=dep_colors[:len(pa)],
+                        line=dict(color="white", width=2)),
             textinfo="percent+label",
-            textfont=dict(size=11),
+            textfont=dict(size=10),
             textposition="inside",
         ))
-        total_u = int(pa["Ventas"].sum())
+        total_prep = int(pa["Ventas"].sum())
         fig_pie.update_layout(
             **BASE_LAYOUT, height=340, showlegend=False,
             annotations=[dict(
-                text=f"<b>{total_u:,}</b><br>unid.",
+                text=f"<b>{total_prep:,}</b><br>unid.",
                 x=0.5, y=0.5, font_size=13, showarrow=False,
                 font_color=C_PRIMARY,
             )],
