@@ -666,7 +666,12 @@ TMPL_TEX = make_template(COLS_TEX, [
 def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
     try:
         if file.name.endswith(".csv"):
-            df = pd.read_csv(file, sep=None, engine="python")
+            # Intentar UTF-8 primero; si falla (Excel español usa Latin-1/cp1252) reintentar
+            try:
+                df = pd.read_csv(file, sep=None, engine="python", encoding="utf-8")
+            except UnicodeDecodeError:
+                file.seek(0)
+                df = pd.read_csv(file, sep=None, engine="python", encoding="latin-1")
         else:
             try:
                 import openpyxl  # noqa
