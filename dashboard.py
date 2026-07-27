@@ -1192,61 +1192,72 @@ with tab1:
     # ── COMPARAR PERÍODOS ──────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     with st.expander("📊 Comparar con otro período", expanded=False):
-        # Período A = selección actual (readonly)
-        if sel_mo == "Todos los meses":
-            label_a = f"Todo {sel_yr}"
-        else:
-            label_a = f"{sel_mo} {sel_yr}"
 
-        cmp1, cmp2, cmp3 = st.columns(3)
-        cmp1.markdown(f"**Período A (actual):** `{label_a}`")
+        # ── Construir lista de períodos disponibles en los datos ──
+        _avail_yrs = sorted(df_may_base["Año"].unique(), reverse=True)
+        _period_opts = []
+        for _yr in _avail_yrs:
+            _period_opts.append(f"Todo {_yr}")
+            for _m in sorted(
+                df_may_base[df_may_base["Año"]==_yr]["Mes"].unique(),
+                key=mes_sort, reverse=True,
+            ):
+                _period_opts.append(_m)
 
-        cmp_yr_all = sorted(df_may_base["Año"].unique(), reverse=True)
-        cmp_yr_b = cmp2.selectbox("📅 Año B", cmp_yr_all, key="cmp_yr")
+        # Default para Mes A = selección actual del tab
+        _default_a = f"Todo {sel_yr}" if sel_mo == "Todos los meses" else sel_mo
+        _idx_a = _period_opts.index(_default_a) if _default_a in _period_opts else 0
+        # Default para Mes B = segundo elemento (mes más reciente o Todo año anterior)
+        _idx_b = min(1, len(_period_opts)-1)
 
-        cmp_mo_all = ["Todos los meses"] + sorted(
-            df_may_base[df_may_base["Año"]==cmp_yr_b]["Mes"].unique(),
-            key=mes_sort,
+        cmp_c1, cmp_c2, cmp_c3 = st.columns(3)
+        cmp_per_a = cmp_c1.selectbox("📅 Mes A", _period_opts,
+                                      index=_idx_a, key="cmp_per_a")
+        cmp_per_b = cmp_c2.selectbox("📅 Mes B", _period_opts,
+                                      index=_idx_b, key="cmp_per_b")
+
+        # Producto exclusivo para la comparación
+        _cmp_prod_all = sorted(
+            df_may_base[df_may_base["Departamento"]!="Fanero"]["Producto"]
+            .dropna().unique().tolist()
         )
-        # Si Período A es "Todos los meses", defaultear Período B al mismo modo
-        cmp_default_idx = 0 if sel_mo == "Todos los meses" else 0
-        cmp_mo_b = cmp3.selectbox("🗓️ Mes B", cmp_mo_all,
-                                   index=cmp_default_idx, key="cmp_mo")
+        cmp_prod = cmp_c3.multiselect(
+            "🛒 Producto", _cmp_prod_all,
+            default=["Prepago"], key="cmp_prod",
+            placeholder="Todos los productos",
+        )
+        if not cmp_prod:
+            cmp_prod = _cmp_prod_all
 
-        if cmp_mo_b == "Todos los meses":
-            label_b = f"Todo {cmp_yr_b}"
+        # ── Filtrar datos para cada período ──────────────────────
+        def _df_for_period(per_str: str) -> pd.DataFrame:
+            base = df_may_base[
+                (df_may_base["Departamento"]!="Fanero") &
+                df_may_base["Producto"].isin(cmp_prod) &
+                df_may_base["Canal"].isin(sel_canal) &
+                df_may_base["SubCanal"].isin(sel_subcanal) &
+                df_may_base["Habilitador"].isin(sel_hab)
+            ]
+            if per_str.startswith("Todo "):
+                yr = int(per_str.split()[1])
+                return base[base["Año"]==yr].copy()
+            else:
+                return base[base["Mes"]==per_str].copy()
+
+        df_a_cmp = _df_for_period(cmp_per_a)
+        df_b_cmp = _df_for_period(cmp_per_b)
+
+        if df_a_cmp.empty and df_b_cmp.empty:
+            st.warning("⚠️ Sin datos para ninguno de los períodos seleccionados.")
         else:
-            label_b = cmp_mo_b   # ya viene como "Ene 2026", no agregar año de nuevo
-
-        # Período B — mismos filtros de Canal/SubCanal/Habilitador, solo cambia el tiempo
-        cmp_prod_filter = ["Prepago"] if (sel_mo == "Todos los meses" or cmp_mo_b == "Todos los meses") \
-                          else list(sel_pr)
-
-        df_b_base = df_may_base[
-            (df_may_base["Año"]==cmp_yr_b) &
-            (df_may_base["Departamento"]!="Fanero") &
-            df_may_base["Producto"].isin(cmp_prod_filter) &
-            df_may_base["Canal"].isin(sel_canal) &
-            df_may_base["SubCanal"].isin(sel_subcanal) &
-            df_may_base["Habilitador"].isin(sel_hab)
-        ].copy()
-
-        if cmp_mo_b != "Todos los meses":
-            df_b_base = df_b_base[df_b_base["Mes"]==cmp_mo_b]
-
-        # Período A para la comparación (ya tenemos df_base)
-        df_a_cmp = df_base.copy()
-
-        if df_b_base.empty:
-            st.warning("⚠️ Sin datos para el Período B.")
-        else:
-            if cmp_prod_filter == ["Prepago"]:
-                st.caption("📌 Comparación · Producto: **Prepago**")
-
+            st.caption(
+                f"📌 **{cmp_per_a}** vs **{cmp_per_b}** · "
+                f"Producto(s): **{', '.join(cmp_prod)}**"
+            )
             st.markdown(
                 build_comparison_html(
-                    df_a=df_a_cmp, df_b=df_b_base,
-                    label_a=label_a, label_b=label_b,
+                    df_a=df_a_cmp, df_b=df_b_cmp,
+                    label_a=cmp_per_a, label_b=cmp_per_b,
                     departments=DEPARTMENTS,
                 ),
                 unsafe_allow_html=True,
@@ -1254,31 +1265,31 @@ with tab1:
             st.markdown("<br>", unsafe_allow_html=True)
 
             # Gráfico comparativo — barras agrupadas por departamento
-            da2 = (df_a_cmp.groupby("Departamento")
+            _da = (df_a_cmp.groupby("Departamento")
                             .agg(Ventas=("Ventas","sum")).reset_index())
-            db2 = (df_b_base.groupby("Departamento")
+            _db = (df_b_cmp.groupby("Departamento")
                             .agg(Ventas=("Ventas","sum")).reset_index())
-            depts_cmp = [d for d in DEPARTMENTS
-                         if d in da2["Departamento"].values or d in db2["Departamento"].values]
-            va_vals = [da2.loc[da2["Departamento"]==d,"Ventas"].sum() for d in depts_cmp]
-            vb_vals = [db2.loc[db2["Departamento"]==d,"Ventas"].sum() for d in depts_cmp]
+            _depts = [d for d in DEPARTMENTS
+                      if d in _da["Departamento"].values or d in _db["Departamento"].values]
+            _va = [_da.loc[_da["Departamento"]==d,"Ventas"].sum() for d in _depts]
+            _vb = [_db.loc[_db["Departamento"]==d,"Ventas"].sum() for d in _depts]
 
             fig_cmp = go.Figure()
             fig_cmp.add_trace(go.Bar(
-                name=label_a, x=depts_cmp, y=va_vals,
+                name=cmp_per_a, x=_depts, y=_va,
                 marker_color=C_PRIMARY, opacity=0.9,
-                text=[f"{int(v):,}" for v in va_vals],
+                text=[f"{int(v):,}" for v in _va],
                 textposition="outside", textfont=dict(size=9),
             ))
             fig_cmp.add_trace(go.Bar(
-                name=label_b, x=depts_cmp, y=vb_vals,
+                name=cmp_per_b, x=_depts, y=_vb,
                 marker_color="#E67E22", opacity=0.9,
-                text=[f"{int(v):,}" for v in vb_vals],
+                text=[f"{int(v):,}" for v in _vb],
                 textposition="outside", textfont=dict(size=9),
             ))
             fig_cmp.update_layout(
                 **BASE_LAYOUT, height=340, barmode="group",
-                title=dict(text=f"Ventas: {label_a} vs {label_b}",
+                title=dict(text=f"Ventas: {cmp_per_a} vs {cmp_per_b}",
                            font=dict(size=13, color=C_PRIMARY)),
                 yaxis=dict(title="Unidades", tickformat=",", gridcolor="#E8EDF2"),
                 xaxis=dict(tickangle=-20),
