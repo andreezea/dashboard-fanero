@@ -15,6 +15,7 @@
 """
 
 import io
+import unicodedata
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -199,6 +200,12 @@ DEPARTMENTS = [
     "Amazonas","Cajamarca","Huancavelica","Huánuco",
     "Junín","Loreto","Pasco","San Martín","Ucayali",
 ]
+
+def _norm(s: str) -> str:
+    """Quita tildes y pasa a minúsculas (para comparación tolerante)."""
+    return unicodedata.normalize("NFD", s).encode("ascii","ignore").decode().lower().strip()
+
+_DEPT_MAP = {_norm(d): d for d in DEPARTMENTS}   # ej. "huanuco" → "Huánuco"
 PRODUCTS_M = ["Prepago","Porta Prepago","Postpago","OSS"]
 
 CANALES: dict[str, list[str]] = {
@@ -635,6 +642,90 @@ def build_monthly_cross_html(df_data: pd.DataFrame, months: list[str],
     return "".join(H)
 
 
+# ── Tabla comparativa de dos períodos ────────────────
+def build_comparison_html(df_a: pd.DataFrame, df_b: pd.DataFrame,
+                           label_a: str, label_b: str,
+                           departments: list[str]) -> str:
+    """
+    Tabla lado a lado: filas=departamentos, columnas=[Cuota A, Cierre A, %Cumpl A |
+                                                       Cuota B, Cierre B, %Cumpl B | Var%]
+    """
+    def _agg(df):
+        a = (df.groupby("Departamento", as_index=False)
+               .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum")))
+        a["Cumpl"] = a["Ventas"] / a["Cuota"].replace(0, np.nan) * 100
+        return a
+
+    agg_a = _agg(df_a)
+    agg_b = _agg(df_b)
+
+    def _get(agg, dept):
+        r = agg[agg["Departamento"]==dept]
+        if r.empty: return 0.0, 0.0, None
+        return r["Cuota"].iat[0], r["Ventas"].iat[0], r["Cumpl"].iat[0]
+
+    def _pct_html(p, extra=""):
+        if p is None or (isinstance(p, float) and np.isnan(p)):
+            return '<td class="td-cumpl">–</td>'
+        return f'<td class="td-cumpl" style="color:{cc(p)};{extra}">{p:.0f}%</td>'
+
+    def _var_html(va, vb, extra=""):
+        if not va: return '<td class="td-cumpl">–</td>'
+        var = (vb - va) / va * 100
+        sign = "▲" if var >= 0 else "▼"
+        color = C_SUCCESS if var >= 0 else C_ACCENT
+        return (f'<td class="td-cumpl" style="color:{color};font-weight:700;{extra}">'
+                f'{sign}{abs(var):.1f}%</td>')
+
+    def _f(v): return fmt_tbl(v, units=True)
+
+    H = ['<div class="pivot-wrap"><table class="pivot-tbl">']
+    # Encabezado
+    H.append('<thead><tr>')
+    H.append('<th class="th-first" rowspan="2">DEPARTAMENTO</th>')
+    H.append(f'<th class="th-prod" colspan="3" style="background:#1B3A6B">{label_a}</th>')
+    H.append(f'<th class="th-prod" colspan="3" style="background:#1A5276">{label_b}</th>')
+    H.append('<th class="th-prod" rowspan="2" style="min-width:80px">Var. Cierre</th>')
+    H.append('</tr><tr>')
+    for _ in range(2):
+        H.append('<th class="th-sub">Cuota</th>'
+                 '<th class="th-sub">Cierre</th>'
+                 '<th class="th-sub">%Cumpl</th>')
+    H.append('</tr></thead><tbody>')
+
+    # Filas de departamentos
+    depts_show = [d for d in departments
+                  if d in agg_a["Departamento"].values or d in agg_b["Departamento"].values]
+    for dept in depts_show:
+        ca, va, pa = _get(agg_a, dept)
+        cb, vb, pb = _get(agg_b, dept)
+        H.append('<tr class="tr-sub">')
+        H.append(f'<td class="td-first">{dept}</td>')
+        H.append(f'<td class="td-num">{_f(ca)}</td><td class="td-num">{_f(va)}</td>')
+        H.append(_pct_html(pa))
+        H.append(f'<td class="td-num">{_f(cb)}</td><td class="td-num">{_f(vb)}</td>')
+        H.append(_pct_html(pb))
+        H.append(_var_html(va, vb))
+        H.append('</tr>')
+
+    # Fila Fanero
+    fan_ca = df_a["Cuota"].sum(); fan_va = df_a["Ventas"].sum()
+    fan_cb = df_b["Cuota"].sum(); fan_vb = df_b["Ventas"].sum()
+    fan_pa = fan_va / fan_ca * 100 if fan_ca else 0
+    fan_pb = fan_vb / fan_cb * 100 if fan_cb else 0
+    H.append('<tr class="tr-cluster" style="background:#0D2447;border-top:3px solid #F4D03F">')
+    H.append('<td class="td-first" style="font-size:.85rem">🏆 FANERO</td>')
+    H.append(f'<td class="td-num">{_f(fan_ca)}</td><td class="td-num">{_f(fan_va)}</td>')
+    H.append(_pct_html(fan_pa, "font-size:.85rem"))
+    H.append(f'<td class="td-num">{_f(fan_cb)}</td><td class="td-num">{_f(fan_vb)}</td>')
+    H.append(_pct_html(fan_pb, "font-size:.85rem"))
+    H.append(_var_html(fan_va, fan_vb, "font-size:.85rem"))
+    H.append('</tr>')
+
+    H.append('</tbody></table></div>')
+    return "".join(H)
+
+
 # ── Plantillas CSV ───────────────────────────────────
 def make_template(cols:list[str], sample_rows:list[dict]) -> bytes:
     buf = io.StringIO()
@@ -684,6 +775,12 @@ def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
         if missing:
             st.error(f"⚠️ Faltan columnas: {', '.join(missing)}")
             return None
+
+        # Normalizar departamentos (tolera tildes/mayúsculas: "Huanuco" → "Huánuco")
+        if "Departamento" in df.columns:
+            df["Departamento"] = df["Departamento"].apply(
+                lambda x: _DEPT_MAP.get(_norm(str(x)), str(x).strip())
+            )
 
         # Si el archivo tiene columnas MES y AÑO, reconstruir Fecha desde ellas
         # (es común que todos los meses tengan la misma fecha en el Excel, ej. 1/01/2026)
@@ -921,10 +1018,13 @@ with tab1:
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ── FILTRADO ───────────────────────────────────────
+    # En modo "Todos los meses" siempre se usa solo Prepago (vista mensual = Prepago)
+    prod_filter = ["Prepago"] if sel_mo == "Todos los meses" else list(sel_pr)
+
     df_base = df_may_base[
         (df_may_base["Año"]==sel_yr) &
         (df_may_base["Departamento"]!="Fanero") &
-        df_may_base["Producto"].isin(sel_pr) &
+        df_may_base["Producto"].isin(prod_filter) &
         df_may_base["Canal"].isin(sel_canal) &
         df_may_base["SubCanal"].isin(sel_subcanal) &
         df_may_base["Habilitador"].isin(sel_hab)
@@ -981,19 +1081,12 @@ with tab1:
     st.markdown('<div class="sec-title">📊 Tabla de Desempeño</div>', unsafe_allow_html=True)
 
     if sel_mo == "Todos los meses":
-        # ── Modo mensual: siempre Prepago, filas=departamentos, columnas=meses ─
-        df_prepago = df_may_base[
-            (df_may_base["Año"]==sel_yr) &
-            (df_may_base["Departamento"]!="Fanero") &
-            (df_may_base["Producto"]=="Prepago") &
-            df_may_base["SubCanal"].isin(sel_subcanal) &
-            df_may_base["Habilitador"].isin(sel_hab)
-        ].copy()
+        # ── Modo mensual: df_base ya filtrado a Prepago ───────────────────────
         st.caption("📌 Vista mensual · Producto: **Prepago**")
-        month_order = sorted(df_prepago["Mes"].unique(), key=mes_sort)
-        depts_show  = [d for d in DEPARTMENTS if d in df_prepago["Departamento"].unique()]
+        month_order = sorted(df_base["Mes"].unique(), key=mes_sort)
+        depts_show  = [d for d in DEPARTMENTS if d in df_base["Departamento"].unique()]
         html_may = build_monthly_cross_html(
-            df_data     = df_prepago,
+            df_data     = df_base,
             months      = month_order,
             departments = depts_show,
             units       = True,
@@ -1088,6 +1181,99 @@ with tab1:
             )],
         )
         st.plotly_chart(fig_pie, use_container_width=True)
+
+    # ── COMPARAR PERÍODOS ──────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.expander("📊 Comparar con otro período", expanded=False):
+        # Período A = selección actual (readonly)
+        if sel_mo == "Todos los meses":
+            label_a = f"Todo {sel_yr}"
+        else:
+            label_a = f"{sel_mo} {sel_yr}"
+
+        cmp1, cmp2, cmp3 = st.columns(3)
+        cmp1.markdown(f"**Período A (actual):** `{label_a}`")
+
+        cmp_yr_all = sorted(df_may_base["Año"].unique(), reverse=True)
+        cmp_yr_b = cmp2.selectbox("📅 Año B", cmp_yr_all, key="cmp_yr")
+
+        cmp_mo_all = ["Todos los meses"] + sorted(
+            df_may_base[df_may_base["Año"]==cmp_yr_b]["Mes"].unique(),
+            key=mes_sort,
+        )
+        cmp_mo_b = cmp3.selectbox("🗓️ Mes B", cmp_mo_all, key="cmp_mo")
+
+        if cmp_mo_b == "Todos los meses":
+            label_b = f"Todo {cmp_yr_b}"
+        else:
+            label_b = f"{cmp_mo_b} {cmp_yr_b}"
+
+        # Período B — mismos filtros de Canal/SubCanal/Habilitador, solo cambia el tiempo
+        cmp_prod_filter = ["Prepago"] if (sel_mo == "Todos los meses" or cmp_mo_b == "Todos los meses") \
+                          else list(sel_pr)
+
+        df_b_base = df_may_base[
+            (df_may_base["Año"]==cmp_yr_b) &
+            (df_may_base["Departamento"]!="Fanero") &
+            df_may_base["Producto"].isin(cmp_prod_filter) &
+            df_may_base["Canal"].isin(sel_canal) &
+            df_may_base["SubCanal"].isin(sel_subcanal) &
+            df_may_base["Habilitador"].isin(sel_hab)
+        ].copy()
+
+        if cmp_mo_b != "Todos los meses":
+            df_b_base = df_b_base[df_b_base["Mes"]==cmp_mo_b]
+
+        # Período A para la comparación (ya tenemos df_base)
+        df_a_cmp = df_base.copy()
+
+        if df_b_base.empty:
+            st.warning("⚠️ Sin datos para el Período B.")
+        else:
+            if cmp_prod_filter == ["Prepago"]:
+                st.caption("📌 Comparación · Producto: **Prepago**")
+
+            st.markdown(
+                build_comparison_html(
+                    df_a=df_a_cmp, df_b=df_b_base,
+                    label_a=label_a, label_b=label_b,
+                    departments=DEPARTMENTS,
+                ),
+                unsafe_allow_html=True,
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # Gráfico comparativo — barras agrupadas por departamento
+            da2 = (df_a_cmp.groupby("Departamento")
+                            .agg(Ventas=("Ventas","sum")).reset_index())
+            db2 = (df_b_base.groupby("Departamento")
+                            .agg(Ventas=("Ventas","sum")).reset_index())
+            depts_cmp = [d for d in DEPARTMENTS
+                         if d in da2["Departamento"].values or d in db2["Departamento"].values]
+            va_vals = [da2.loc[da2["Departamento"]==d,"Ventas"].sum() for d in depts_cmp]
+            vb_vals = [db2.loc[db2["Departamento"]==d,"Ventas"].sum() for d in depts_cmp]
+
+            fig_cmp = go.Figure()
+            fig_cmp.add_trace(go.Bar(
+                name=label_a, x=depts_cmp, y=va_vals,
+                marker_color=C_PRIMARY, opacity=0.9,
+                text=[f"{int(v):,}" for v in va_vals],
+                textposition="outside", textfont=dict(size=9),
+            ))
+            fig_cmp.add_trace(go.Bar(
+                name=label_b, x=depts_cmp, y=vb_vals,
+                marker_color="#E67E22", opacity=0.9,
+                text=[f"{int(v):,}" for v in vb_vals],
+                textposition="outside", textfont=dict(size=9),
+            ))
+            fig_cmp.update_layout(
+                **BASE_LAYOUT, height=340, barmode="group",
+                title=dict(text=f"Ventas: {label_a} vs {label_b}",
+                           font=dict(size=13, color=C_PRIMARY)),
+                yaxis=dict(title="Unidades", tickformat=",", gridcolor="#E8EDF2"),
+                xaxis=dict(tickangle=-20),
+            )
+            st.plotly_chart(fig_cmp, use_container_width=True)
 
 
 # ────────────────────────────────────────────────────
