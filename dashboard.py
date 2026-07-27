@@ -442,8 +442,8 @@ def render_trend(df_src: pd.DataFrame, height:int=320) -> None:
     fig.add_trace(go.Scatter(
         x=tr["Fecha"], y=tr["Cuota"],
         name="Cuota", mode="lines+markers",
-        line=dict(color=C_LIGHT, width=2, dash="dot"),
-        marker=dict(size=5, color=C_LIGHT),
+        line=dict(color=C_ACCENT, width=2, dash="dot"),
+        marker=dict(size=5, color=C_ACCENT),
     ))
     fig.add_trace(go.Scatter(
         x=tr["Fecha"], y=tr["Ventas"],
