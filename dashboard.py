@@ -843,45 +843,41 @@ with tab1:
     sel_mo  = c2.selectbox("🗓️ Mes", all_mo_yr, key="m_mo")
     sel_dep = c3.selectbox("🗺️ Departamento", ["Todos (Fanero)"]+DEPARTMENTS, key="m_dep")
 
-    # Fila 2: Canal | Habilitador
-    c4, c5 = st.columns([2, 3])
-    sel_canal = c4.selectbox("📡 Canal", ["Todos"]+list(CANALES.keys()), key="m_canal")
+    # Fila 2: Canal | SubCanal (listas desplegables con check)
+    c4, c5 = st.columns(2)
+    sel_canal = c4.multiselect(
+        "📡 Canal", list(CANALES.keys()),
+        default=list(CANALES.keys()), key="m_canal",
+        placeholder="Todos los canales",
+    )
+    if not sel_canal:
+        sel_canal = list(CANALES.keys())
 
-    # SubCanal — opciones dependen del canal seleccionado
-    if sel_canal == "Todos":
-        subcanal_opts = ALL_SUBCANALES
-    else:
-        subcanal_opts = CANALES[sel_canal]
-
-    # Fila 3: SubCanal (pills)
-    sel_subcanal = st.pills(
-        "🔗 SubCanal",
-        subcanal_opts,
-        selection_mode="multi",
+    # SubCanal depende del canal seleccionado
+    subcanal_opts = [sc for c in sel_canal for sc in CANALES[c]]
+    sel_subcanal = c5.multiselect(
+        "🔗 SubCanal", subcanal_opts,
         default=subcanal_opts,
-        key=f"m_sub_{sel_canal}",   # key dinámico → reset al cambiar canal
+        key=f"m_sub_{'_'.join(sorted(sel_canal))}",
+        placeholder="Todos los subcanales",
     )
     if not sel_subcanal:
         sel_subcanal = subcanal_opts
 
-    # Fila 4: Habilitadores (pills)
-    sel_hab = st.pills(
-        "🔧 Habilitadores",
-        HABILITADORES,
-        selection_mode="multi",
-        default=HABILITADORES,
-        key="m_hab",
+    # Fila 3: Habilitadores | Producto (listas desplegables con check)
+    c6, c7 = st.columns(2)
+    sel_hab = c6.multiselect(
+        "🔧 Habilitadores", HABILITADORES,
+        default=HABILITADORES, key="m_hab",
+        placeholder="Todos los habilitadores",
     )
     if not sel_hab:
         sel_hab = HABILITADORES
 
-    # Fila 5: Producto (pills)
-    sel_pr = st.pills(
-        "🛒 Producto",
-        PRODUCTS_M,
-        selection_mode="multi",
-        default=PRODUCTS_M,
-        key="m_pr",
+    sel_pr = c7.multiselect(
+        "🛒 Producto", PRODUCTS_M,
+        default=PRODUCTS_M, key="m_pr",
+        placeholder="Todos los productos",
     )
     if not sel_pr:
         st.info("Selecciona al menos un producto.")
