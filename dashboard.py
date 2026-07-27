@@ -227,6 +227,20 @@ TEX_LOCATIONS = [
     "Tex Yarinacocha",
 ]
 
+# ── Utilidad de meses en español ─────────────────────
+MES_ES  = {1:"Ene",2:"Feb",3:"Mar",4:"Abr",5:"May",6:"Jun",
+           7:"Jul",8:"Ago",9:"Sep",10:"Oct",11:"Nov",12:"Dic"}
+_INV_MES = {v:k for k,v in MES_ES.items()}
+
+def mes_str(m) -> str:
+    """Timestamp → 'Ene 2026' en español."""
+    return f"{MES_ES[m.month]} {m.year}"
+
+def mes_sort(s: str) -> tuple:
+    """'Ene 2026' → (2026, 1) para ordenar cronológicamente."""
+    ab, yr = s.split()
+    return (int(yr), _INV_MES.get(ab, 0))
+
 COLS_MAY_REQUIRED = ["Fecha","Departamento","Producto","Ventas","Cuota"]
 COLS_MAY = ["Fecha","Departamento","Canal","SubCanal","Habilitador","Producto","Ventas","Cuota"]
 COLS_TPF = ["Fecha","Cluster","Subcluster","Producto","Ventas","Cuota"]
@@ -279,7 +293,7 @@ def generate_mayoristas() -> pd.DataFrame:
                     hab = rng.choice(list(hab_w.keys()),
                                      p=list(hab_w.values()))
                     rows.append({
-                        "Fecha": m, "Mes": m.strftime("%b %Y"), "Año": m.year,
+                        "Fecha": m, "Mes": mes_str(m), "Año": m.year,
                         "Departamento": dept,
                         "Canal": canal, "SubCanal": subcanal,
                         "Habilitador": hab,
@@ -324,7 +338,7 @@ def generate_tpf() -> pd.DataFrame:
                 for prod, mix in pmix_t.items():
                     v = max(base_s*mix*trend*seasonal*np.random.normal(1,.08),0)
                     c = max(v*np.random.uniform(.87,1.23),0)
-                    rows.append({"Fecha":m,"Mes":m.strftime("%b %Y"),"Año":m.year,
+                    rows.append({"Fecha":m,"Mes":mes_str(m),"Año":m.year,
                                   "Cluster":cluster,"Subcluster":sub,"Producto":prod,
                                   "Ventas":round(v),"Cuota":round(c)})
     df = pd.DataFrame(rows)
@@ -356,7 +370,7 @@ def generate_tex() -> pd.DataFrame:
             for prod, mix in pmix_t.items():
                 v = max(base[loc]*mix*trend*seasonal*np.random.normal(1,.07), 0)
                 c = max(v*np.random.uniform(.88,1.22), 0)
-                rows.append({"Fecha":m,"Mes":m.strftime("%b %Y"),"Año":m.year,
+                rows.append({"Fecha":m,"Mes":mes_str(m),"Año":m.year,
                               "Lugar":loc,"Producto":prod,
                               "Ventas":round(v),"Cuota":round(c)})
     df = pd.DataFrame(rows)
@@ -667,7 +681,7 @@ def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
             return None
         df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
         df.dropna(subset=["Fecha"], inplace=True)
-        df["Mes"] = df["Fecha"].dt.strftime("%b %Y")
+        df["Mes"] = df["Fecha"].apply(mes_str)
         df["Año"] = df["Fecha"].dt.year
         if "Cuota" not in df.columns:
             df["Cuota"] = df["Ventas"] * 1.10
@@ -819,7 +833,7 @@ with tab1:
 
     all_mo_yr = ["Todos los meses"] + sorted(
         df_may_base[df_may_base["Año"]==sel_yr]["Mes"].unique(),
-        key=lambda x: pd.to_datetime(x, format="%b %Y"),
+        key=mes_sort,
     )
     sel_mo  = c2.selectbox("🗓️ Mes", all_mo_yr, key="m_mo")
     sel_dep = c3.selectbox("🗺️ Departamento", ["Todos (Fanero)"]+DEPARTMENTS, key="m_dep")
@@ -930,15 +944,19 @@ with tab1:
     st.markdown('<div class="sec-title">📊 Tabla de Desempeño</div>', unsafe_allow_html=True)
 
     if sel_mo == "Todos los meses":
-        # ── Modo mensual: filas=departamentos, columnas=meses ─
-        month_order = sorted(
-            df_base["Mes"].unique(),
-            key=lambda x: pd.to_datetime(x, format="%b %Y"),
-        )
-        # Solo mostrar departamentos con datos en el período
-        depts_show = [d for d in DEPARTMENTS if d in df_base["Departamento"].unique()]
+        # ── Modo mensual: siempre Prepago, filas=departamentos, columnas=meses ─
+        df_prepago = df_may_base[
+            (df_may_base["Año"]==sel_yr) &
+            (df_may_base["Departamento"]!="Fanero") &
+            (df_may_base["Producto"]=="Prepago") &
+            df_may_base["SubCanal"].isin(sel_subcanal) &
+            df_may_base["Habilitador"].isin(sel_hab)
+        ].copy()
+        st.caption("📌 Vista mensual · Producto: **Prepago**")
+        month_order = sorted(df_prepago["Mes"].unique(), key=mes_sort)
+        depts_show  = [d for d in DEPARTMENTS if d in df_prepago["Departamento"].unique()]
         html_may = build_monthly_cross_html(
-            df_data     = df_base,
+            df_data     = df_prepago,
             months      = month_order,
             departments = depts_show,
             units       = True,
@@ -1049,7 +1067,7 @@ with tab2:
 
     t_mo_all = ["Todos los meses"] + sorted(
         df_tpf_base[df_tpf_base["Año"]==sel_ty]["Mes"].unique(),
-        key=lambda x: pd.to_datetime(x, format="%b %Y"),
+        key=mes_sort,
     )
     sel_tm_raw = t2.selectbox("🗓️ Mes", t_mo_all, key="t_mo")
 
@@ -1159,7 +1177,7 @@ with tab3:
 
     x_mo_all = ["Todos los meses"] + sorted(
         df_tex_base[df_tex_base["Año"]==sel_xy]["Mes"].unique(),
-        key=lambda m: pd.to_datetime(m, format="%b %Y"),
+        key=mes_sort,
     )
     sel_xm_raw = x2.selectbox("🗓️ Mes", x_mo_all, key="x_mo")
 
