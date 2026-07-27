@@ -902,6 +902,13 @@ def _procesar_upload(file, req_cols, ss_key, id_key, es_may=False):
         st.session_state[ss_key] = _up
         st.toast(f"✅ Cargado: {len(_up):,} filas")
     st.session_state[id_key] = fid
+    # Limpiar claves de filtros para que se reinicien con los nuevos valores
+    for _fk in ["m_canal","m_hab","m_pr","m_sub","cmp_yr","cmp_mo"]:
+        st.session_state.pop(_fk, None)
+    # Limpiar claves dinámicas de subcanal (patrón m_sub_*)
+    for _fk in list(st.session_state.keys()):
+        if _fk.startswith("m_sub_"):
+            del st.session_state[_fk]
     st.rerun()
 
 if st.session_state.admin_ok:
@@ -1201,12 +1208,15 @@ with tab1:
             df_may_base[df_may_base["Año"]==cmp_yr_b]["Mes"].unique(),
             key=mes_sort,
         )
-        cmp_mo_b = cmp3.selectbox("🗓️ Mes B", cmp_mo_all, key="cmp_mo")
+        # Si Período A es "Todos los meses", defaultear Período B al mismo modo
+        cmp_default_idx = 0 if sel_mo == "Todos los meses" else 0
+        cmp_mo_b = cmp3.selectbox("🗓️ Mes B", cmp_mo_all,
+                                   index=cmp_default_idx, key="cmp_mo")
 
         if cmp_mo_b == "Todos los meses":
             label_b = f"Todo {cmp_yr_b}"
         else:
-            label_b = f"{cmp_mo_b} {cmp_yr_b}"
+            label_b = cmp_mo_b   # ya viene como "Ene 2026", no agregar año de nuevo
 
         # Período B — mismos filtros de Canal/SubCanal/Habilitador, solo cambia el tiempo
         cmp_prod_filter = ["Prepago"] if (sel_mo == "Todos los meses" or cmp_mo_b == "Todos los meses") \
