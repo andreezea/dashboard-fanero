@@ -684,7 +684,25 @@ def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
         if missing:
             st.error(f"⚠️ Faltan columnas: {', '.join(missing)}")
             return None
-        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
+
+        # Si el archivo tiene columnas MES y AÑO, reconstruir Fecha desde ellas
+        # (es común que todos los meses tengan la misma fecha en el Excel, ej. 1/01/2026)
+        _MESES_NUM = {
+            "ENERO":1,"FEBRERO":2,"MARZO":3,"ABRIL":4,"MAYO":5,"JUNIO":6,
+            "JULIO":7,"AGOSTO":8,"SEPTIEMBRE":9,"OCTUBRE":10,"NOVIEMBRE":11,"DICIEMBRE":12,
+            "ENE":1,"FEB":2,"MAR":3,"ABR":4,"MAY":5,"JUN":6,
+            "JUL":7,"AGO":8,"SEP":9,"OCT":10,"NOV":11,"DIC":12,
+        }
+        if "MES" in df.columns and "AÑO" in df.columns:
+            def _fecha_desde_mes(row):
+                m = _MESES_NUM.get(str(row["MES"]).upper().strip(), 0)
+                if m:
+                    return pd.Timestamp(year=int(row["AÑO"]), month=m, day=1)
+                return pd.NaT
+            df["Fecha"] = df.apply(_fecha_desde_mes, axis=1)
+        else:
+            df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
+
         df.dropna(subset=["Fecha"], inplace=True)
         df["Mes"] = df["Fecha"].apply(mes_str)
         df["Año"] = df["Fecha"].dt.year
@@ -782,7 +800,9 @@ with adm_col:
                     fan["Departamento"]  = "Fanero"
                     fan["Cumplimiento"]  = (fan["Ventas"]/fan["Cuota"]*100).round(1)
                     st.session_state.df_may_up = pd.concat([_up, fan], ignore_index=True)
-                    st.success("Mayoristas cargado ✓")
+                    st.success(f"✅ Mayoristas cargado · {len(_up):,} filas · "
+                               f"{_up['Mes'].nunique()} meses")
+                    st.rerun()
             st.download_button("⬇️ Plantilla Mayoristas", TMPL_MAY,
                                 "plantilla_mayoristas.csv", mime="text/csv", key="dl_may")
 
