@@ -691,11 +691,13 @@ def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
         if "Cuota" not in df.columns:
             df["Cuota"] = df["Ventas"] * 1.10
         df["Cumplimiento"] = (df["Ventas"] / df["Cuota"] * 100).round(1)
-        # Agregar columnas opcionales con defaults si no vienen en el archivo
+        # Columnas opcionales: si no existen o están vacías → poner default
         for col, default in [("Canal","(Sin canal)"),("SubCanal","(Sin subcanal)"),
                               ("Habilitador","(Sin habilitador)")]:
             if col not in df.columns:
                 df[col] = default
+            else:
+                df[col] = df[col].fillna(default).replace("", default)
         return df
     except Exception as e:
         st.error(f"Error al leer archivo: {e}")
@@ -843,18 +845,25 @@ with tab1:
     sel_mo  = c2.selectbox("🗓️ Mes", all_mo_yr, key="m_mo")
     sel_dep = c3.selectbox("🗺️ Departamento", ["Todos (Fanero)"]+DEPARTMENTS, key="m_dep")
 
-    # Fila 2: Canal | SubCanal (listas desplegables con check)
+    # Fila 2: Canal | SubCanal — opciones leídas desde los datos reales
     c4, c5 = st.columns(2)
+    canal_opts = sorted(df_may_base[df_may_base["Departamento"]!="Fanero"]["Canal"]
+                        .dropna().unique().tolist())
     sel_canal = c4.multiselect(
-        "📡 Canal", list(CANALES.keys()),
-        default=list(CANALES.keys()), key="m_canal",
+        "📡 Canal", canal_opts,
+        default=canal_opts, key="m_canal",
         placeholder="Todos los canales",
     )
     if not sel_canal:
-        sel_canal = list(CANALES.keys())
+        sel_canal = canal_opts
 
-    # SubCanal depende del canal seleccionado
-    subcanal_opts = [sc for c in sel_canal for sc in CANALES[c]]
+    # SubCanal: solo los que pertenecen a los canales seleccionados
+    subcanal_opts = sorted(
+        df_may_base[
+            (df_may_base["Departamento"]!="Fanero") &
+            df_may_base["Canal"].isin(sel_canal)
+        ]["SubCanal"].dropna().unique().tolist()
+    )
     sel_subcanal = c5.multiselect(
         "🔗 SubCanal", subcanal_opts,
         default=subcanal_opts,
@@ -864,19 +873,23 @@ with tab1:
     if not sel_subcanal:
         sel_subcanal = subcanal_opts
 
-    # Fila 3: Habilitadores | Producto (listas desplegables con check)
+    # Fila 3: Habilitadores | Producto — opciones leídas desde los datos reales
     c6, c7 = st.columns(2)
+    hab_opts = sorted(df_may_base[df_may_base["Departamento"]!="Fanero"]["Habilitador"]
+                      .dropna().unique().tolist())
     sel_hab = c6.multiselect(
-        "🔧 Habilitadores", HABILITADORES,
-        default=HABILITADORES, key="m_hab",
+        "🔧 Habilitadores", hab_opts,
+        default=hab_opts, key="m_hab",
         placeholder="Todos los habilitadores",
     )
     if not sel_hab:
-        sel_hab = HABILITADORES
+        sel_hab = hab_opts
 
+    prod_opts = sorted(df_may_base[df_may_base["Departamento"]!="Fanero"]["Producto"]
+                       .dropna().unique().tolist())
     sel_pr = c7.multiselect(
-        "🛒 Producto", PRODUCTS_M,
-        default=PRODUCTS_M, key="m_pr",
+        "🛒 Producto", prod_opts,
+        default=prod_opts, key="m_pr",
         placeholder="Todos los productos",
     )
     if not sel_pr:
@@ -890,6 +903,7 @@ with tab1:
         (df_may_base["Año"]==sel_yr) &
         (df_may_base["Departamento"]!="Fanero") &
         df_may_base["Producto"].isin(sel_pr) &
+        df_may_base["Canal"].isin(sel_canal) &
         df_may_base["SubCanal"].isin(sel_subcanal) &
         df_may_base["Habilitador"].isin(sel_hab)
     ].copy()
