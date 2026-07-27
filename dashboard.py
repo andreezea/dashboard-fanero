@@ -1,7 +1,7 @@
 """
 ╔══════════════════════════════════════════════════════════════════════╗
-║        DASHBOARD EJECUTIVO FANERO  v2  ·  Streamlit + Plotly        ║
-║  Pestañas: MAYORISTAS | TPF | CONGRESO                               ║
+║        DASHBOARD EJECUTIVO FANERO  v3  ·  Streamlit + Plotly        ║
+║  Pestañas: MAYORISTAS | TPF | TEX                                    ║
 ║                                                                      ║
 ║  DEPLOY LOCAL:                                                       ║
 ║    pip install -r requirements.txt                                   ║
@@ -29,7 +29,7 @@ st.set_page_config(
     page_title="Dashboard Ejecutivo | Fanero",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ══════════════════════════════════════════════════════
@@ -168,45 +168,6 @@ st.markdown(f"""
 .pivot-tbl .tr-sub .td-num   {{ text-align:center; padding:.35rem .3rem; color:#34495E; }}
 .pivot-tbl .tr-sub .td-cumpl {{ text-align:center; padding:.35rem .3rem; font-weight:700; font-size:.82rem; }}
 
-/* ── Congress ─────────────────────────────────────── */
-.congress-wrap {{
-  display:flex; flex-direction:column; align-items:center;
-  justify-content:center; min-height:52vh; text-align:center;
-}}
-.congress-wrap h2 {{ color:{C_PRIMARY}; font-size:1.9rem; font-weight:700; margin-bottom:.4rem; }}
-.congress-wrap p  {{ color:{C_NEUTRAL}; font-size:1rem; line-height:1.6; }}
-
-/* ── Botón ☰ sidebar (toggle) ─────────────────────── */
-[data-testid="collapsedControl"] {{
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    background: {C_PRIMARY} !important;
-    color: white !important;
-    border-radius: 0 8px 8px 0 !important;
-    width: 28px !important;
-    min-height: 56px !important;
-    font-size: 1.1rem !important;
-    box-shadow: 2px 0 8px rgba(27,58,107,.25) !important;
-    cursor: pointer !important;
-    top: 50% !important;
-    transform: translateY(-50%) !important;
-}}
-[data-testid="collapsedControl"]:hover {{
-    background: {C_SECONDARY} !important;
-    box-shadow: 2px 0 12px rgba(27,58,107,.4) !important;
-}}
-/* Ocultar el ícono de chevron por defecto y mostrar ☰ */
-[data-testid="collapsedControl"] svg {{
-    display: none !important;
-}}
-[data-testid="collapsedControl"]::after {{
-    content: "☰";
-    font-size: 1.1rem;
-    color: white;
-    font-weight: 400;
-}}
-
 /* ── Sidebar upload ───────────────────────────────── */
 .upload-title {{ font-weight:700; font-size:.85rem; color:{C_PRIMARY}; }}
 </style>
@@ -220,6 +181,14 @@ DEPARTMENTS = [
     "Junín","Loreto","Pasco","San Martín","Ucayali",
 ]
 PRODUCTS_M = ["Prepago","Porta Prepago","Postpago","OSS"]
+
+CANALES: dict[str, list[str]] = {
+    "Proactivos": ["MULTIMARCA","HC MONOMARCA","EMO","EMO MERCADOS Y BODEGAS","DESARROLLADOR"],
+    "Receptivos": ["PDV","PDV PLUS","PDVX","PDVX PW"],
+}
+ALL_SUBCANALES = [sc for scs in CANALES.values() for sc in scs]
+
+HABILITADORES = ["PDV captura","Mercados","Ferias","Activaciones","Desarrolladores"]
 
 CLUSTERS: dict[str, list[str]] = {
     "IQUITOS":                              ["TOTTUS_PU_LAMARINA","TPF IQUITOS","TPF MAP IQUITOS"],
@@ -239,7 +208,8 @@ TEX_LOCATIONS = [
     "Tex Yarinacocha",
 ]
 
-COLS_MAY = ["Fecha","Departamento","Producto","Ventas","Cuota"]
+COLS_MAY_REQUIRED = ["Fecha","Departamento","Producto","Ventas","Cuota"]
+COLS_MAY = ["Fecha","Departamento","Canal","SubCanal","Habilitador","Producto","Ventas","Cuota"]
 COLS_TPF = ["Fecha","Cluster","Subcluster","Producto","Ventas","Cuota"]
 COLS_TEX = ["Fecha","Lugar","Producto","Ventas","Cuota"]
 
@@ -248,34 +218,67 @@ COLS_TEX = ["Fecha","Lugar","Producto","Ventas","Cuota"]
 # ══════════════════════════════════════════════════════
 @st.cache_data(show_spinner=False)
 def generate_mayoristas() -> pd.DataFrame:
-    """Genera datos en UNIDADES (activaciones/conexiones), no monetarios."""
+    """Genera datos en UNIDADES (activaciones/conexiones), no monetarios.
+       Incluye Canal, SubCanal y Habilitador para filtrado dimensional."""
     np.random.seed(42)
     months = pd.date_range("2023-01-01","2026-06-01",freq="MS")
-    # Unidades base por departamento y mes (rango realista: 40-200 u/producto)
     base   = {"Amazonas":120,"Cajamarca":115,"Huancavelica":48,
                "Huánuco":98,"Junín":170,"Loreto":185,
                "Pasco":55,"San Martín":88,"Ucayali":118}
     pmix   = {"Prepago":.44,"Porta Prepago":.26,"Postpago":.20,"OSS":.10}
-    rows   = []
+
+    # Peso de cada Canal/SubCanal sobre el total
+    canal_subcanal_w = [
+        ("Proactivos", "MULTIMARCA",              .13),
+        ("Proactivos", "HC MONOMARCA",            .08),
+        ("Proactivos", "EMO",                     .11),
+        ("Proactivos", "EMO MERCADOS Y BODEGAS",  .08),
+        ("Proactivos", "DESARROLLADOR",           .10),
+        ("Receptivos", "PDV",                     .16),
+        ("Receptivos", "PDV PLUS",                .09),
+        ("Receptivos", "PDVX",                    .14),
+        ("Receptivos", "PDVX PW",                 .06),
+    ]
+    hab_w = {"PDV captura":.25,"Mercados":.20,"Ferias":.15,
+             "Activaciones":.25,"Desarrolladores":.15}
+
+    rows = []
+    rng  = np.random.default_rng(42)
+
     for m in months:
         elapsed  = (m.year-2023)*12 + m.month-1
         trend    = 1 + .004*elapsed
         seasonal = 1 + .08*np.sin(2*np.pi*m.month/12)
         for dept in DEPARTMENTS:
-            for prod,mix in pmix.items():
-                v = max(base[dept]*mix*trend*seasonal*np.random.normal(1,.07), 0)
-                c = v*np.random.uniform(.91,1.20)
-                rows.append({"Fecha":m,"Mes":m.strftime("%b %Y"),"Año":m.year,
-                              "Departamento":dept,"Producto":prod,
-                              "Ventas":round(v),"Cuota":round(c)})
+            for prod, pmix_v in pmix.items():
+                total_v = max(base[dept]*pmix_v*trend*seasonal*rng.normal(1,.07), 0)
+                total_c = total_v * rng.uniform(.91, 1.20)
+                for canal, subcanal, w in canal_subcanal_w:
+                    noise = rng.normal(1, .05)
+                    v = max(round(total_v * w * noise), 0)
+                    c = max(round(total_c * w * noise), 1)
+                    hab = rng.choice(list(hab_w.keys()),
+                                     p=list(hab_w.values()))
+                    rows.append({
+                        "Fecha": m, "Mes": m.strftime("%b %Y"), "Año": m.year,
+                        "Departamento": dept,
+                        "Canal": canal, "SubCanal": subcanal,
+                        "Habilitador": hab,
+                        "Producto": prod,
+                        "Ventas": v, "Cuota": c,
+                    })
+
     df = pd.DataFrame(rows)
     df["Cumplimiento"] = (df["Ventas"]/df["Cuota"]*100).round(1)
-    # Fanero = total consolidado
-    fan = (df.groupby(["Fecha","Mes","Año","Producto"],as_index=False)
-             .agg(Ventas=("Ventas","sum"),Cuota=("Cuota","sum")))
-    fan["Departamento"] = "Fanero"
-    fan["Cumplimiento"] = (fan["Ventas"]/fan["Cuota"]*100).round(1)
-    return pd.concat([df,fan],ignore_index=True)
+
+    # Fanero = total consolidado (suma de todos los departamentos)
+    fan = (df.groupby(
+               ["Fecha","Mes","Año","Canal","SubCanal","Habilitador","Producto"],
+               as_index=False)
+             .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum")))
+    fan["Departamento"]  = "Fanero"
+    fan["Cumplimiento"]  = (fan["Ventas"]/fan["Cuota"]*100).round(1)
+    return pd.concat([df, fan], ignore_index=True)
 
 
 @st.cache_data(show_spinner=False)
@@ -294,12 +297,12 @@ def generate_tpf() -> pd.DataFrame:
         elapsed  = (m.year-2023)*12 + m.month-1
         trend    = 1 + .004*elapsed
         seasonal = 1 + .07*np.sin(2*np.pi*m.month/12)
-        for cluster,subs in CLUSTERS.items():
+        for cluster, subs in CLUSTERS.items():
             n = len(subs)
             for sub in subs:
                 ratio   = np.random.uniform(.28,.58)
                 base_s  = (base_cl[cluster]/n)*ratio*2
-                for prod,mix in pmix_t.items():
+                for prod, mix in pmix_t.items():
                     v = max(base_s*mix*trend*seasonal*np.random.normal(1,.08),0)
                     c = max(v*np.random.uniform(.87,1.23),0)
                     rows.append({"Fecha":m,"Mes":m.strftime("%b %Y"),"Año":m.year,
@@ -331,7 +334,7 @@ def generate_tex() -> pd.DataFrame:
         trend    = 1 + .004*elapsed
         seasonal = 1 + .07*np.sin(2*np.pi*m.month/12)
         for loc in TEX_LOCATIONS:
-            for prod,mix in pmix_t.items():
+            for prod, mix in pmix_t.items():
                 v = max(base[loc]*mix*trend*seasonal*np.random.normal(1,.07), 0)
                 c = max(v*np.random.uniform(.88,1.22), 0)
                 rows.append({"Fecha":m,"Mes":m.strftime("%b %Y"),"Año":m.year,
@@ -345,11 +348,6 @@ def generate_tex() -> pd.DataFrame:
 # ══════════════════════════════════════════════════════
 # UTILIDADES
 # ══════════════════════════════════════════════════════
-def fmt(v: float) -> str:
-    if v >= 1_000_000: return f"S/ {v/1_000_000:.2f}M"
-    if v >= 1_000:     return f"S/ {v/1_000:.1f}K"
-    return f"S/ {v:,.0f}"
-
 def fmt_tbl(v, units:bool=False) -> str:
     """Formato para celdas de tabla. units=True → entero puro sin símbolo."""
     if v is None or (isinstance(v, float) and np.isnan(v)): return "–"
@@ -418,6 +416,7 @@ def render_trend(df_src: pd.DataFrame, height:int=320) -> None:
     fig.update_yaxes(title_text="Cumplimiento (%)", secondary_y=True, showgrid=False)
     st.plotly_chart(fig, use_container_width=True)
 
+
 # ── Pivot table builder ───────────────────────────────
 def build_pivot_html(df_data:pd.DataFrame, products:list[str],
                      group_col:str, sub_col:str|None,
@@ -425,8 +424,8 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
                      grand_total_label:str|None=None) -> str:
     """
     Construye una tabla HTML estilizada tipo gerencial.
-    group_col         : columna de agrupación principal (Cluster)
-    sub_col           : columna de detalle (Subcluster / Departamento)
+    group_col         : columna de agrupación principal
+    sub_col           : columna de detalle (o None para tabla plana)
     group_map         : dict grupo → [sub1, sub2, ...]  (para orden)
     units             : True → enteros puros sin símbolo monetario
     grand_total_label : si se indica (ej. "FANERO"), agrega fila gran total arriba
@@ -448,6 +447,7 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
         sub_agg["Cumpl"] = sub_agg["Ventas"]/sub_agg["Cuota"].replace(0,np.nan)*100
 
     # Agregado gran total (suma de todos los grupos)
+    gt_agg = None
     if grand_total_label:
         gt_agg = (
             df_data.groupby("Producto",as_index=False)
@@ -457,21 +457,21 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
 
     def row_vals(df, filters:dict, prod:str):
         mask = pd.Series([True]*len(df), index=df.index)
-        for col,val in filters.items():
+        for col, val in filters.items():
             mask &= df[col]==val
         r = df[mask & (df["Producto"]==prod)]
-        if r.empty: return None,None,None
+        if r.empty: return None, None, None
         return r["Cuota"].iat[0], r["Ventas"].iat[0], r["Cumpl"].iat[0]
 
     def row_vals_simple(df, prod:str):
         r = df[df["Producto"]==prod]
-        if r.empty: return None,None,None
+        if r.empty: return None, None, None
         return r["Cuota"].iat[0], r["Ventas"].iat[0], r["Cumpl"].iat[0]
 
     def _f(v): return fmt_tbl(v, units=units)
 
     def _cumpl_td(pct, extra_style=""):
-        if pct is None or (isinstance(pct,float) and np.isnan(pct)):
+        if pct is None or (isinstance(pct, float) and np.isnan(pct)):
             return '<td class="td-cumpl">–</td>'
         return f'<td class="td-cumpl" style="color:{cc(pct)};{extra_style}">{pct:.0f}%</td>'
 
@@ -480,7 +480,7 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
 
     # Header row 1 — nombre de producto
     H.append('<thead><tr>')
-    H.append('<th class="th-first" rowspan="2">CLUSTER / SUBCLUSTER</th>')
+    H.append('<th class="th-first" rowspan="2">SEGMENTO</th>')
     for p in products:
         H.append(f'<th class="th-prod" colspan="3">{p}</th>')
     H.append('</tr><tr>')
@@ -491,12 +491,12 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
     H.append('</tr></thead><tbody>')
 
     # ── Fila gran total (Fanero) ──────────────────────
-    if grand_total_label:
+    if grand_total_label and gt_agg is not None:
         H.append('<tr class="tr-cluster" style="background:#0D2447;border-bottom:3px solid #F4D03F">')
         H.append(f'<td class="td-first" style="font-size:.85rem;letter-spacing:.3px">'
                  f'🏆 {grand_total_label}</td>')
         for p in products:
-            c,v,pct = row_vals_simple(gt_agg, p)
+            c, v, pct = row_vals_simple(gt_agg, p)
             H.append(f'<td class="td-num">{_f(c)}</td><td class="td-num">{_f(v)}</td>')
             H.append(_cumpl_td(pct, "font-size:.85rem"))
         H.append('</tr>')
@@ -508,7 +508,7 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
         H.append('<tr class="tr-cluster">')
         H.append(f'<td class="td-first">▼ 🔵 {grp}</td>')
         for p in products:
-            c,v,pct = row_vals(grp_agg,{group_col:grp},p)
+            c, v, pct = row_vals(grp_agg, {group_col: grp}, p)
             H.append(f'<td class="td-num">{_f(c)}</td>'
                      f'<td class="td-num">{_f(v)}</td>')
             H.append(_cumpl_td(pct))
@@ -522,7 +522,7 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
                 H.append('<tr class="tr-sub">')
                 H.append(f'<td class="td-first">{sub}</td>')
                 for p in products:
-                    c,v,pct = row_vals(sub_agg,{group_col:grp,sub_col:sub},p)
+                    c, v, pct = row_vals(sub_agg, {group_col: grp, sub_col: sub}, p)
                     H.append(f'<td class="td-num">{_f(c)}</td>'
                              f'<td class="td-num">{_f(v)}</td>')
                     H.append(_cumpl_td(pct))
@@ -532,17 +532,22 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
     return "".join(H)
 
 
-# ── Plantillas CSV (sin dependencia de openpyxl) ─────
+# ── Plantillas CSV ───────────────────────────────────
 def make_template(cols:list[str], sample_rows:list[dict]) -> bytes:
     buf = io.StringIO()
-    # sep=";" → Excel en español abre las columnas separadas correctamente
     pd.DataFrame(sample_rows, columns=cols).to_csv(buf, index=False, sep=";")
     return buf.getvalue().encode("utf-8")
 
 TMPL_MAY = make_template(COLS_MAY, [
-    {"Fecha":"2024-01-01","Departamento":"Amazonas","Producto":"Prepago",    "Ventas":15000,"Cuota":18000},
-    {"Fecha":"2024-01-01","Departamento":"Cajamarca","Producto":"Postpago",  "Ventas":22000,"Cuota":20000},
-    {"Fecha":"2024-02-01","Departamento":"Loreto",   "Producto":"OSS",       "Ventas":9000, "Cuota":10000},
+    {"Fecha":"2024-01-01","Departamento":"Amazonas","Canal":"Proactivos",
+     "SubCanal":"MULTIMARCA","Habilitador":"Mercados","Producto":"Prepago",
+     "Ventas":52,"Cuota":60},
+    {"Fecha":"2024-01-01","Departamento":"Cajamarca","Canal":"Receptivos",
+     "SubCanal":"PDV","Habilitador":"Activaciones","Producto":"Postpago",
+     "Ventas":38,"Cuota":35},
+    {"Fecha":"2024-02-01","Departamento":"Loreto","Canal":"Proactivos",
+     "SubCanal":"EMO","Habilitador":"Ferias","Producto":"OSS",
+     "Ventas":18,"Cuota":20},
 ])
 TMPL_TPF = make_template(COLS_TPF, [
     {"Fecha":"2024-01-01","Cluster":"IQUITOS",   "Subcluster":"TPF IQUITOS",  "Producto":"SS",   "Ventas":5000,"Cuota":6000},
@@ -558,18 +563,18 @@ TMPL_TEX = make_template(COLS_TEX, [
 def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
     try:
         if file.name.endswith(".csv"):
-            df = pd.read_csv(file, sep=None, engine="python")  # detecta ; o , automático
+            df = pd.read_csv(file, sep=None, engine="python")
         else:
             try:
                 import openpyxl  # noqa
                 df = pd.read_excel(file, engine="openpyxl")
             except ModuleNotFoundError:
-                st.sidebar.error("⚠️ openpyxl no disponible. Sube el archivo en formato CSV.")
+                st.error("⚠️ openpyxl no disponible. Sube el archivo en formato CSV.")
                 return None
         df.columns = df.columns.str.strip()
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
-            st.sidebar.error(f"⚠️ Faltan columnas: {', '.join(missing)}")
+            st.error(f"⚠️ Faltan columnas: {', '.join(missing)}")
             return None
         df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
         df.dropna(subset=["Fecha"], inplace=True)
@@ -578,124 +583,131 @@ def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
         if "Cuota" not in df.columns:
             df["Cuota"] = df["Ventas"] * 1.10
         df["Cumplimiento"] = (df["Ventas"] / df["Cuota"] * 100).round(1)
+        # Agregar columnas opcionales con defaults si no vienen en el archivo
+        for col, default in [("Canal","(Sin canal)"),("SubCanal","(Sin subcanal)"),
+                              ("Habilitador","(Sin habilitador)")]:
+            if col not in df.columns:
+                df[col] = default
         return df
     except Exception as e:
-        st.sidebar.error(f"Error al leer archivo: {e}")
+        st.error(f"Error al leer archivo: {e}")
         return None
 
 
 # ══════════════════════════════════════════════════════
-# SIDEBAR — CARGA DE DATOS
+# SESIÓN — ESTADO ADMIN Y DATOS CARGADOS
 # ══════════════════════════════════════════════════════
-# Inicializar estado de sesión admin
 if "admin_ok" not in st.session_state:
     st.session_state.admin_ok = False
-
-may_file = tpf_file = tex_file = None   # por defecto sin archivos
-
-with st.sidebar:
-    st.markdown("## 🔐 Administrador")
-    st.markdown("---")
-
-    if not st.session_state.admin_ok:
-        # ── Formulario de acceso ──────────────────────
-        adm_user = st.text_input("Usuario", key="adm_user",
-                                  placeholder="Ingresa tu usuario")
-        adm_pwd  = st.text_input("Contraseña", type="password", key="adm_pwd",
-                                  placeholder="Ingresa tu contraseña")
-        if st.button("🔓 Ingresar", key="adm_btn", use_container_width=True):
-            if adm_user == "admin" and adm_pwd == "admin2025":
-                st.session_state.admin_ok = True
-                st.rerun()
-            else:
-                st.error("Usuario o contraseña incorrectos.")
-        st.caption("Solo el administrador puede cargar datos.")
-
-    else:
-        # ── Panel de carga (solo admin) ───────────────
-        st.success("✅ Sesión activa · admin")
-        if st.button("🔒 Cerrar sesión", key="adm_logout", use_container_width=True):
-            st.session_state.admin_ok = False
-            st.rerun()
-
-        st.markdown("---")
-        st.markdown("### 🏬 Mayoristas")
-        may_file = st.file_uploader("Archivo Mayoristas (.xlsx / .csv)",
-                                     type=["xlsx","csv"], key="up_may",
-                                     help=f"Columnas: {', '.join(COLS_MAY)}")
-        st.download_button("⬇️ Plantilla Mayoristas", TMPL_MAY,
-                            "plantilla_mayoristas.csv", mime="text/csv", key="dl_may")
-
-        st.markdown("---")
-        st.markdown("### 🏪 TPF")
-        tpf_file = st.file_uploader("Archivo TPF (.xlsx / .csv)",
-                                      type=["xlsx","csv"], key="up_tpf",
-                                      help=f"Columnas: {', '.join(COLS_TPF)}")
-        st.download_button("⬇️ Plantilla TPF", TMPL_TPF,
-                            "plantilla_tpf.csv", mime="text/csv", key="dl_tpf")
-
-        st.markdown("---")
-        st.markdown("### 🏪 TEX")
-        tex_file = st.file_uploader("Archivo TEX (.xlsx / .csv)",
-                                     type=["xlsx","csv"], key="up_tex",
-                                     help=f"Columnas: {', '.join(COLS_TEX)}")
-        st.download_button("⬇️ Plantilla TEX", TMPL_TEX,
-                            "plantilla_tex.csv", mime="text/csv", key="dl_tex")
-
-        st.markdown("---")
-        may_status = "✅ Reales" if may_file else "🔵 Demo"
-        tpf_status = "✅ Reales" if tpf_file else "🔵 Demo"
-        tex_status = "✅ Reales" if tex_file else "🔵 Demo"
-        st.caption(f"Mayoristas: {may_status} · TPF: {tpf_status} · TEX: {tex_status}")
+if "df_may_up" not in st.session_state:
+    st.session_state.df_may_up = None
+if "df_tpf_up" not in st.session_state:
+    st.session_state.df_tpf_up = None
+if "df_tex_up" not in st.session_state:
+    st.session_state.df_tex_up = None
 
 
 # ══════════════════════════════════════════════════════
 # CARGAR / GENERAR DATOS
 # ══════════════════════════════════════════════════════
-df_may_base = generate_mayoristas()
-df_tpf_base = generate_tpf()
-df_tex_base = generate_tex()
-
-if may_file:
-    _up = load_uploaded(may_file, COLS_MAY)
-    if _up is not None:
-        # Añadir fila Fanero
-        fan = (_up.groupby(["Fecha","Mes","Año","Producto"],as_index=False)
-                  .agg(Ventas=("Ventas","sum"),Cuota=("Cuota","sum")))
-        fan["Departamento"] = "Fanero"
-        fan["Cumplimiento"] = (fan["Ventas"]/fan["Cuota"]*100).round(1)
-        df_may_base = pd.concat([_up, fan], ignore_index=True)
-        st.sidebar.success("Mayoristas cargado correctamente ✓")
-
-if tpf_file:
-    _up = load_uploaded(tpf_file, COLS_TPF)
-    if _up is not None:
-        df_tpf_base = _up
-        st.sidebar.success("TPF cargado correctamente ✓")
-
-if tex_file:
-    _up = load_uploaded(tex_file, COLS_TEX)
-    if _up is not None:
-        df_tex_base = _up
-        st.sidebar.success("TEX cargado correctamente ✓")
+df_may_base = st.session_state.df_may_up if st.session_state.df_may_up is not None \
+              else generate_mayoristas()
+df_tpf_base = st.session_state.df_tpf_up if st.session_state.df_tpf_up is not None \
+              else generate_tpf()
+df_tex_base = st.session_state.df_tex_up if st.session_state.df_tex_up is not None \
+              else generate_tex()
 
 
 # ══════════════════════════════════════════════════════
-# HEADER GLOBAL
+# HEADER GLOBAL + BOTÓN ADMIN (☰)
 # ══════════════════════════════════════════════════════
 now_str = datetime.now().strftime("%d %b %Y · %H:%M")
-st.markdown(f"""
-<div class="exec-header">
-  <div>
-    <h1>📊 Dashboard Ejecutivo &nbsp;·&nbsp; Fanero</h1>
-    <p>Análisis de desempeño comercial &nbsp;|&nbsp; Actualizado: {now_str}</p>
-  </div>
-  <div class="exec-badge">⚡ Vista Gerencial</div>
-</div>
-""", unsafe_allow_html=True)
+hdr_col, adm_col = st.columns([11, 1])
 
+with hdr_col:
+    st.markdown(f"""
+    <div class="exec-header">
+      <div>
+        <h1>📊 Dashboard Ejecutivo &nbsp;·&nbsp; Fanero</h1>
+        <p>Análisis de desempeño comercial &nbsp;|&nbsp; Actualizado: {now_str}</p>
+      </div>
+      <div class="exec-badge">⚡ Vista Gerencial</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-# (panel admin en sidebar — ver bloque with st.sidebar arriba)
+with adm_col:
+    st.markdown("<div style='margin-top:1.1rem'></div>", unsafe_allow_html=True)
+    with st.popover("☰", use_container_width=True):
+        st.markdown("### 🔐 Administrador")
+        if not st.session_state.admin_ok:
+            adm_user = st.text_input("Usuario", key="adm_user",
+                                      placeholder="Ingresa tu usuario")
+            adm_pwd  = st.text_input("Contraseña", type="password", key="adm_pwd",
+                                      placeholder="Contraseña")
+            if st.button("🔓 Ingresar", key="adm_btn", use_container_width=True):
+                if adm_user == "admin" and adm_pwd == "admin2025":
+                    st.session_state.admin_ok = True
+                    st.rerun()
+                else:
+                    st.error("Usuario o contraseña incorrectos.")
+            st.caption("Solo el administrador puede cargar datos.")
+        else:
+            st.success("✅ Sesión activa · admin")
+            if st.button("🔒 Cerrar sesión", key="adm_logout", use_container_width=True):
+                st.session_state.admin_ok = False
+                st.rerun()
+
+            st.markdown("---")
+            st.markdown("#### 🏬 Mayoristas")
+            may_file = st.file_uploader("Mayoristas (.csv / .xlsx)",
+                                         type=["xlsx","csv"], key="up_may",
+                                         help=f"Columnas requeridas: {', '.join(COLS_MAY_REQUIRED)}")
+            if may_file:
+                _up = load_uploaded(may_file, COLS_MAY_REQUIRED)
+                if _up is not None:
+                    fan = (_up.groupby(
+                               ["Fecha","Mes","Año","Canal","SubCanal","Habilitador","Producto"],
+                               as_index=False)
+                             .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum")))
+                    fan["Departamento"]  = "Fanero"
+                    fan["Cumplimiento"]  = (fan["Ventas"]/fan["Cuota"]*100).round(1)
+                    st.session_state.df_may_up = pd.concat([_up, fan], ignore_index=True)
+                    st.success("Mayoristas cargado ✓")
+            st.download_button("⬇️ Plantilla Mayoristas", TMPL_MAY,
+                                "plantilla_mayoristas.csv", mime="text/csv", key="dl_may")
+
+            st.markdown("---")
+            st.markdown("#### 🏪 TPF")
+            tpf_file = st.file_uploader("TPF (.csv / .xlsx)",
+                                          type=["xlsx","csv"], key="up_tpf",
+                                          help=f"Columnas: {', '.join(COLS_TPF)}")
+            if tpf_file:
+                _up = load_uploaded(tpf_file, COLS_TPF)
+                if _up is not None:
+                    st.session_state.df_tpf_up = _up
+                    st.success("TPF cargado ✓")
+            st.download_button("⬇️ Plantilla TPF", TMPL_TPF,
+                                "plantilla_tpf.csv", mime="text/csv", key="dl_tpf")
+
+            st.markdown("---")
+            st.markdown("#### 🏪 TEX")
+            tex_file = st.file_uploader("TEX (.csv / .xlsx)",
+                                         type=["xlsx","csv"], key="up_tex",
+                                         help=f"Columnas: {', '.join(COLS_TEX)}")
+            if tex_file:
+                _up = load_uploaded(tex_file, COLS_TEX)
+                if _up is not None:
+                    st.session_state.df_tex_up = _up
+                    st.success("TEX cargado ✓")
+            st.download_button("⬇️ Plantilla TEX", TMPL_TEX,
+                                "plantilla_tex.csv", mime="text/csv", key="dl_tex")
+
+            st.markdown("---")
+            may_st = "✅ Reales" if st.session_state.df_may_up is not None else "🔵 Demo"
+            tpf_st = "✅ Reales" if st.session_state.df_tpf_up is not None else "🔵 Demo"
+            tex_st = "✅ Reales" if st.session_state.df_tex_up is not None else "🔵 Demo"
+            st.caption(f"May: {may_st} · TPF: {tpf_st} · TEX: {tex_st}")
+
 
 # ══════════════════════════════════════════════════════
 # TABS
@@ -710,20 +722,52 @@ with tab1:
 
     # ── FILTROS ────────────────────────────────────────
     st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
 
+    # Fila 1: Año | Mes | Departamento
+    c1, c2, c3 = st.columns(3)
     all_yr  = sorted(df_may_base["Año"].unique(), reverse=True)
     sel_yr  = c1.selectbox("📅 Año", all_yr, key="m_yr")
 
-    all_mo_yr = ["Acumulado"] + sorted(
+    all_mo_yr = ["Todos los meses"] + sorted(
         df_may_base[df_may_base["Año"]==sel_yr]["Mes"].unique(),
         key=lambda x: pd.to_datetime(x, format="%b %Y"),
     )
     sel_mo  = c2.selectbox("🗓️ Mes", all_mo_yr, key="m_mo")
-
     sel_dep = c3.selectbox("🗺️ Departamento", ["Todos (Fanero)"]+DEPARTMENTS, key="m_dep")
 
-    # Segmentación de productos — pills
+    # Fila 2: Canal | Habilitador
+    c4, c5 = st.columns([2, 3])
+    sel_canal = c4.selectbox("📡 Canal", ["Todos"]+list(CANALES.keys()), key="m_canal")
+
+    # SubCanal — opciones dependen del canal seleccionado
+    if sel_canal == "Todos":
+        subcanal_opts = ALL_SUBCANALES
+    else:
+        subcanal_opts = CANALES[sel_canal]
+
+    # Fila 3: SubCanal (pills)
+    sel_subcanal = st.pills(
+        "🔗 SubCanal",
+        subcanal_opts,
+        selection_mode="multi",
+        default=subcanal_opts,
+        key=f"m_sub_{sel_canal}",   # key dinámico → reset al cambiar canal
+    )
+    if not sel_subcanal:
+        sel_subcanal = subcanal_opts
+
+    # Fila 4: Habilitadores (pills)
+    sel_hab = st.pills(
+        "🔧 Habilitadores",
+        HABILITADORES,
+        selection_mode="multi",
+        default=HABILITADORES,
+        key="m_hab",
+    )
+    if not sel_hab:
+        sel_hab = HABILITADORES
+
+    # Fila 5: Producto (pills)
     sel_pr = st.pills(
         "🛒 Producto",
         PRODUCTS_M,
@@ -734,27 +778,28 @@ with tab1:
     if not sel_pr:
         st.info("Selecciona al menos un producto.")
         st.stop()
+
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ── FILTRADO ───────────────────────────────────────
-    # Datos base sin Fanero (calculamos Fanero como suma)
     df_base = df_may_base[
         (df_may_base["Año"]==sel_yr) &
         (df_may_base["Departamento"]!="Fanero") &
-        df_may_base["Producto"].isin(sel_pr)
+        df_may_base["Producto"].isin(sel_pr) &
+        df_may_base["SubCanal"].isin(sel_subcanal) &
+        df_may_base["Habilitador"].isin(sel_hab)
     ].copy()
-    if sel_mo != "Acumulado":
+
+    if sel_mo != "Todos los meses":
         df_base = df_base[df_base["Mes"]==sel_mo]
 
     if df_base.empty:
         st.warning("⚠️ Sin datos para la selección actual.")
         st.stop()
 
-    # Datos del departamento seleccionado para KPIs
-    if sel_dep == "Todos (Fanero)":
-        df_kpi = df_base.copy()
-    else:
-        df_kpi = df_base[df_base["Departamento"]==sel_dep].copy()
+    # Datos para KPIs (respeta filtro de departamento)
+    df_kpi = df_base.copy() if sel_dep=="Todos (Fanero)" \
+             else df_base[df_base["Departamento"]==sel_dep].copy()
 
     # ── KPIs ───────────────────────────────────────────
     tv = df_kpi["Ventas"].sum()
@@ -762,15 +807,16 @@ with tab1:
     cp = tv/tc*100 if tc else 0
     br = tc - tv
 
-    # Delta vs mes anterior (si se filtra por mes específico)
-    if sel_mo != "Acumulado":
-        mo_idx   = all_mo_yr.index(sel_mo)
-        prev_mo  = all_mo_yr[mo_idx-1] if mo_idx > 1 else None  # idx=0 es "Acumulado"
-        if prev_mo and prev_mo != "Acumulado":
+    if sel_mo != "Todos los meses":
+        mo_idx  = all_mo_yr.index(sel_mo)
+        prev_mo = all_mo_yr[mo_idx-1] if mo_idx > 1 else None
+        if prev_mo and prev_mo != "Todos los meses":
             df_prev = df_may_base[
                 (df_may_base["Año"]==sel_yr) &
                 (df_may_base["Mes"]==prev_mo) &
                 df_may_base["Producto"].isin(sel_pr) &
+                df_may_base["SubCanal"].isin(sel_subcanal) &
+                df_may_base["Habilitador"].isin(sel_hab) &
                 (df_may_base["Departamento"] == (
                     "Fanero" if sel_dep=="Todos (Fanero)" else sel_dep))
             ]
@@ -792,24 +838,41 @@ with tab1:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── TABLA PIVOTE ───────────────────────────────────
-    st.markdown('<div class="sec-title">📊 Tabla de Desempeño por Departamento</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec-title">📊 Tabla de Desempeño</div>', unsafe_allow_html=True)
 
-    df_tbl = df_base.rename(columns={"Departamento":"Sub"}).copy()
-    df_tbl["Grupo"] = "Fanero (Total)"
+    if sel_mo == "Todos los meses":
+        # ── Modo mensual: filas = meses ──────────────
+        df_pivot = df_base.copy() if sel_dep=="Todos (Fanero)" \
+                   else df_base[df_base["Departamento"]==sel_dep].copy()
+        month_order = sorted(
+            df_pivot["Mes"].unique(),
+            key=lambda x: pd.to_datetime(x, format="%b %Y"),
+        )
+        html_may = build_pivot_html(
+            df_data           = df_pivot,
+            products          = list(sel_pr),
+            group_col         = "Mes",
+            sub_col           = None,
+            group_map         = {m: [] for m in month_order},
+            units             = True,
+            grand_total_label = "FANERO",
+        )
+    else:
+        # ── Modo mes único: filas = departamentos ─────
+        df_tbl = df_base.rename(columns={"Departamento":"Sub"}).copy()
+        df_tbl["Grupo"] = "Fanero (Total)"
+        html_may = build_pivot_html(
+            df_data   = df_tbl,
+            products  = list(sel_pr),
+            group_col = "Grupo",
+            sub_col   = "Sub",
+            group_map = {"Fanero (Total)": DEPARTMENTS},
+            units     = True,
+        )
 
-    html_may = build_pivot_html(
-        df_data   = df_tbl,
-        products  = list(sel_pr),
-        group_col = "Grupo",
-        sub_col   = "Sub",
-        group_map = {"Fanero (Total)": DEPARTMENTS},
-        units     = True,   # ← unidades puras, sin símbolo monetario
-    )
     st.markdown(html_may, unsafe_allow_html=True)
-
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── GRÁFICOS ───────────────────────────────────────
     # ── TENDENCIA MENSUAL ──────────────────────────────
     st.markdown('<div class="sec-title">📈 Tendencia Mensual · Ventas vs Cuota</div>', unsafe_allow_html=True)
     render_trend(df_base)
@@ -852,9 +915,11 @@ with tab1:
             (df_may_base["Año"]==sel_yr) &
             (df_may_base["Producto"]=="Prepago") &
             (df_may_base["Departamento"]!="Fanero") &
+            df_may_base["SubCanal"].isin(sel_subcanal) &
+            df_may_base["Habilitador"].isin(sel_hab) &
             (df_may_base["Mes"].isin(
                 list(df_may_base[df_may_base["Año"]==sel_yr]["Mes"].unique())
-                if sel_mo=="Acumulado" else [sel_mo]
+                if sel_mo=="Todos los meses" else [sel_mo]
             ))
         ]
         pa = (df_prep.groupby("Departamento")
@@ -872,7 +937,7 @@ with tab1:
             textfont=dict(size=10),
             textposition="inside",
         ))
-        total_prep = int(pa["Ventas"].sum())
+        total_prep = int(pa["Ventas"].sum()) if not pa.empty else 0
         fig_pie.update_layout(
             **BASE_LAYOUT, height=340, showlegend=False,
             annotations=[dict(
@@ -896,7 +961,7 @@ with tab2:
     t_yr_all = sorted(df_tpf_base["Año"].unique(), reverse=True)
     sel_ty   = t1.selectbox("📅 Año", t_yr_all, key="t_yr")
 
-    t_mo_all = ["Acumulado"] + sorted(
+    t_mo_all = ["Todos los meses"] + sorted(
         df_tpf_base[df_tpf_base["Año"]==sel_ty]["Mes"].unique(),
         key=lambda x: pd.to_datetime(x, format="%b %Y"),
     )
@@ -908,7 +973,6 @@ with tab2:
                 if sel_cl=="Todos" else CLUSTERS[sel_cl])
     sel_sub  = t4.multiselect("Subcluster", sub_pool, default=sub_pool, key="t_sub")
 
-    # Segmentación de productos — pills
     sel_tpr = st.pills(
         "🛒 Producto",
         PRODUCTS_T,
@@ -921,13 +985,11 @@ with tab2:
         st.stop()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Convertir selección de mes a lista para filtrado
     sel_tm = (
         list(df_tpf_base[df_tpf_base["Año"]==sel_ty]["Mes"].unique())
-        if sel_tm_raw == "Acumulado" else [sel_tm_raw]
+        if sel_tm_raw == "Todos los meses" else [sel_tm_raw]
     )
 
-    # Filtrado
     tmask = ((df_tpf_base["Año"]==sel_ty) &
              df_tpf_base["Mes"].isin(sel_tm) &
              df_tpf_base["Subcluster"].isin(sel_sub))
@@ -939,7 +1001,6 @@ with tab2:
         st.warning("⚠️ Sin datos para la selección actual.")
         st.stop()
 
-    # ── TABLA PIVOTE PRINCIPAL ────────────────────────
     st.markdown('<div class="sec-title">📊 Tabla de Desempeño por Cluster y Subcluster</div>', unsafe_allow_html=True)
 
     df_tbl = df_tf[df_tf["Producto"].isin(sel_tpr)].copy()
@@ -967,11 +1028,9 @@ with tab2:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── TENDENCIA MENSUAL ──────────────────────────────
     st.markdown('<div class="sec-title">📈 Tendencia Mensual · Ventas vs Cuota</div>', unsafe_allow_html=True)
     render_trend(df_tf)
 
-    # ── GRÁFICO DE COLUMNAS ───────────────────────────
     st.markdown('<div class="sec-title">📊 Gráfico de Columnas · Ventas vs Cuota por Cluster</div>', unsafe_allow_html=True)
 
     cl_agg = (df_tf.groupby("Cluster")
@@ -1006,14 +1065,13 @@ with tab2:
 # ────────────────────────────────────────────────────
 with tab3:
 
-    # ── Filtros ────────────────────────────────────────
     st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
     x1, x2, x3 = st.columns([2, 2.5, 3])
 
     x_yr_all = sorted(df_tex_base["Año"].unique(), reverse=True)
     sel_xy   = x1.selectbox("📅 Año", x_yr_all, key="x_yr")
 
-    x_mo_all = ["Acumulado"] + sorted(
+    x_mo_all = ["Todos los meses"] + sorted(
         df_tex_base[df_tex_base["Año"]==sel_xy]["Mes"].unique(),
         key=lambda m: pd.to_datetime(m, format="%b %Y"),
     )
@@ -1032,10 +1090,9 @@ with tab3:
         st.stop()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── Filtrado ───────────────────────────────────────
     sel_xm = (
         list(df_tex_base[df_tex_base["Año"]==sel_xy]["Mes"].unique())
-        if sel_xm_raw == "Acumulado" else [sel_xm_raw]
+        if sel_xm_raw == "Todos los meses" else [sel_xm_raw]
     )
     df_tx = df_tex_base[
         (df_tex_base["Año"]==sel_xy) &
@@ -1048,7 +1105,6 @@ with tab3:
         st.warning("⚠️ Sin datos para la selección actual.")
         st.stop()
 
-    # ── TABLA PIVOTE ───────────────────────────────────
     st.markdown('<div class="sec-title">📊 Tabla de Desempeño TEX</div>', unsafe_allow_html=True)
 
     html_tex = build_pivot_html(
@@ -1064,11 +1120,9 @@ with tab3:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── TENDENCIA MENSUAL ──────────────────────────────
     st.markdown('<div class="sec-title">📈 Tendencia Mensual · Ventas vs Cuota</div>', unsafe_allow_html=True)
     render_trend(df_tx)
 
-    # ── GRÁFICO DE COLUMNAS ───────────────────────────
     st.markdown('<div class="sec-title">📊 Gráfico de Columnas · Ventas vs Cuota por Tienda</div>', unsafe_allow_html=True)
 
     loc_agg = (df_tx.groupby("Lugar")
