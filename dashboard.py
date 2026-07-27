@@ -532,6 +532,76 @@ def build_pivot_html(df_data:pd.DataFrame, products:list[str],
     return "".join(H)
 
 
+# ── Tabla cruzada mensual (Todos los meses) ──────────
+def build_monthly_cross_html(df_data: pd.DataFrame, months: list[str],
+                              departments: list[str], units: bool = True) -> str:
+    """
+    Tabla cruzada: filas = departamentos, columnas = meses (Cuota / Cierre / %Cumpl).
+    Última fila: FANERO (suma de todos los departamentos en cada mes).
+    """
+    # Agrega por (Departamento, Mes) sumando todos los productos seleccionados
+    agg = (df_data.groupby(["Departamento","Mes"], as_index=False)
+                  .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum")))
+    agg["Cumpl"] = agg["Ventas"] / agg["Cuota"].replace(0, np.nan) * 100
+
+    # Fanero = suma de todos los departamentos por mes
+    fan = (df_data.groupby("Mes", as_index=False)
+                  .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum")))
+    fan["Cumpl"] = fan["Ventas"] / fan["Cuota"].replace(0, np.nan) * 100
+
+    def _f(v): return fmt_tbl(v, units=units)
+
+    def _num_cells(df_row, mes):
+        r = df_row[df_row["Mes"]==mes]
+        if r.empty:
+            return '<td class="td-num">–</td><td class="td-num">–</td><td class="td-cumpl">–</td>'
+        c, v, p = r["Cuota"].iat[0], r["Ventas"].iat[0], r["Cumpl"].iat[0]
+        pct_html = (f'<td class="td-cumpl" style="color:{cc(p)}">{p:.0f}%</td>'
+                    if p is not None and not np.isnan(p) else '<td class="td-cumpl">–</td>')
+        return f'<td class="td-num">{_f(c)}</td><td class="td-num">{_f(v)}</td>{pct_html}'
+
+    H = ['<div class="pivot-wrap"><table class="pivot-tbl">']
+
+    # Encabezado fila 1 — meses
+    H.append('<thead><tr>')
+    H.append('<th class="th-first" rowspan="2">DEPARTAMENTO</th>')
+    for m in months:
+        H.append(f'<th class="th-prod" colspan="3">{m}</th>')
+    H.append('</tr><tr>')
+    for _ in months:
+        H.append('<th class="th-sub">Cuota</th>'
+                 '<th class="th-sub">Cierre</th>'
+                 '<th class="th-sub">%Cumpl</th>')
+    H.append('</tr></thead><tbody>')
+
+    # Filas de departamentos
+    for dept in departments:
+        df_dept = agg[agg["Departamento"]==dept]
+        H.append('<tr class="tr-sub">')
+        H.append(f'<td class="td-first">{dept}</td>')
+        for m in months:
+            H.append(_num_cells(df_dept, m))
+        H.append('</tr>')
+
+    # Fila FANERO (total)
+    H.append('<tr class="tr-cluster" style="background:#0D2447;border-top:3px solid #F4D03F">')
+    H.append('<td class="td-first" style="font-size:.85rem;letter-spacing:.3px">🏆 FANERO</td>')
+    for m in months:
+        r = fan[fan["Mes"]==m]
+        if r.empty:
+            H.append('<td class="td-num">–</td><td class="td-num">–</td>'
+                     '<td class="td-cumpl">–</td>')
+        else:
+            c, v, p = r["Cuota"].iat[0], r["Ventas"].iat[0], r["Cumpl"].iat[0]
+            pct_html = (f'<td class="td-cumpl" style="color:{cc(p)};font-size:.85rem">{p:.0f}%</td>'
+                        if p is not None and not np.isnan(p) else '<td class="td-cumpl">–</td>')
+            H.append(f'<td class="td-num">{_f(c)}</td><td class="td-num">{_f(v)}</td>{pct_html}')
+    H.append('</tr>')
+
+    H.append('</tbody></table></div>')
+    return "".join(H)
+
+
 # ── Plantillas CSV ───────────────────────────────────
 def make_template(cols:list[str], sample_rows:list[dict]) -> bytes:
     buf = io.StringIO()
@@ -841,24 +911,21 @@ with tab1:
     st.markdown('<div class="sec-title">📊 Tabla de Desempeño</div>', unsafe_allow_html=True)
 
     if sel_mo == "Todos los meses":
-        # ── Modo mensual: filas = meses ──────────────
-        df_pivot = df_base.copy() if sel_dep=="Todos (Fanero)" \
-                   else df_base[df_base["Departamento"]==sel_dep].copy()
+        # ── Modo mensual: filas=departamentos, columnas=meses ─
         month_order = sorted(
-            df_pivot["Mes"].unique(),
+            df_base["Mes"].unique(),
             key=lambda x: pd.to_datetime(x, format="%b %Y"),
         )
-        html_may = build_pivot_html(
-            df_data           = df_pivot,
-            products          = list(sel_pr),
-            group_col         = "Mes",
-            sub_col           = None,
-            group_map         = {m: [] for m in month_order},
-            units             = True,
-            grand_total_label = "FANERO",
+        # Solo mostrar departamentos con datos en el período
+        depts_show = [d for d in DEPARTMENTS if d in df_base["Departamento"].unique()]
+        html_may = build_monthly_cross_html(
+            df_data     = df_base,
+            months      = month_order,
+            departments = depts_show,
+            units       = True,
         )
     else:
-        # ── Modo mes único: filas = departamentos ─────
+        # ── Modo mes único: filas=departamentos, columnas=productos ─
         df_tbl = df_base.rename(columns={"Departamento":"Sub"}).copy()
         df_tbl["Grupo"] = "Fanero (Total)"
         html_may = build_pivot_html(
