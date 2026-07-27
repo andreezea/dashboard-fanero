@@ -24,6 +24,17 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 
 # ══════════════════════════════════════════════════════
+# ALMACÉN GLOBAL — persiste entre recargas (F5) mientras
+# el servidor Streamlit Cloud siga corriendo.
+# Se limpia solo cuando el servidor reinicia (deploy nuevo).
+# ══════════════════════════════════════════════════════
+@st.cache_resource
+def _get_data_store() -> dict:
+    return {"df_may": None, "df_tpf": None, "df_tex": None, "last_update": None}
+
+_STORE = _get_data_store()
+
+# ══════════════════════════════════════════════════════
 # CONFIGURACIÓN DE PÁGINA
 # ══════════════════════════════════════════════════════
 st.set_page_config(
@@ -822,9 +833,16 @@ def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
 # ══════════════════════════════════════════════════════
 # SESIÓN — ESTADO ADMIN Y DATOS CARGADOS
 # ══════════════════════════════════════════════════════
-for _k, _v in [("admin_ok", False),
-               ("df_may_up", None), ("df_tpf_up", None), ("df_tex_up", None),
-               ("_id_may", None),   ("_id_tpf", None),   ("_id_tex", None)]:
+for _k, _v in [
+    ("admin_ok",  False),
+    # Recuperar desde almacén global si la sesión es nueva (F5 / nueva pestaña)
+    ("df_may_up", _STORE["df_may"]),
+    ("df_tpf_up", _STORE["df_tpf"]),
+    ("df_tex_up", _STORE["df_tex"]),
+    ("_id_may",   None),
+    ("_id_tpf",   None),
+    ("_id_tex",   None),
+]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
@@ -843,15 +861,15 @@ df_tex_base = st.session_state.df_tex_up if st.session_state.df_tex_up is not No
 # ══════════════════════════════════════════════════════
 # HEADER GLOBAL + BOTÓN LOGIN (☰)
 # ══════════════════════════════════════════════════════
-now_str = datetime.now().strftime("%d %b %Y · %H:%M")
+_upd_str = _STORE.get("last_update") or "Sin datos cargados"
 hdr_col, adm_col = st.columns([11, 1])
 
 with hdr_col:
     st.markdown(f"""
     <div class="exec-header">
       <div>
-        <h1>📊 Dashboard Ejecutivo &nbsp;·&nbsp; Fanero</h1>
-        <p>Análisis de desempeño comercial &nbsp;|&nbsp; Actualizado: {now_str}</p>
+        <h1>📊 Análisis Histórico y Tendencial &nbsp;·&nbsp; Fanero</h1>
+        <p>Análisis Histórico y Tendencial – Fanero &nbsp;|&nbsp; Última carga: {_upd_str}</p>
       </div>
       <div class="exec-badge">⚡ Vista Gerencial</div>
     </div>
@@ -879,6 +897,8 @@ with adm_col:
 # ══════════════════════════════════════════════════════
 # PANEL DE CARGA DE DATOS (solo si admin — fuera del popover)
 # ══════════════════════════════════════════════════════
+_SS_TO_STORE = {"df_may_up": "df_may", "df_tpf_up": "df_tpf", "df_tex_up": "df_tex"}
+
 def _procesar_upload(file, req_cols, ss_key, id_key, es_may=False):
     """Procesa un archivo subido solo si es nuevo (detectado por file_id)."""
     if file is None:
@@ -896,16 +916,21 @@ def _procesar_upload(file, req_cols, ss_key, id_key, es_may=False):
                  .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum")))
         fan["Departamento"] = "Fanero"
         fan["Cumplimiento"] = (fan["Ventas"] / fan["Cuota"] * 100).round(1)
-        st.session_state[ss_key] = pd.concat([_up, fan], ignore_index=True)
+        _data = pd.concat([_up, fan], ignore_index=True)
+        st.session_state[ss_key] = _data
         st.toast(f"✅ Cargado: {len(_up):,} filas · {_up['Mes'].nunique()} meses")
     else:
-        st.session_state[ss_key] = _up
+        _data = _up
+        st.session_state[ss_key] = _data
         st.toast(f"✅ Cargado: {len(_up):,} filas")
+    # Guardar en almacén global para que persista tras F5
+    if ss_key in _SS_TO_STORE:
+        _STORE[_SS_TO_STORE[ss_key]] = _data
+        _STORE["last_update"] = datetime.now().strftime("%d %b %Y · %H:%M")
     st.session_state[id_key] = fid
     # Limpiar claves de filtros para que se reinicien con los nuevos valores
     for _fk in ["m_canal","m_hab","m_pr","m_sub","cmp_yr","cmp_mo"]:
         st.session_state.pop(_fk, None)
-    # Limpiar claves dinámicas de subcanal (patrón m_sub_*)
     for _fk in list(st.session_state.keys()):
         if _fk.startswith("m_sub_"):
             del st.session_state[_fk]
