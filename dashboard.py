@@ -665,6 +665,48 @@ st.markdown(f"""
 
 
 # ══════════════════════════════════════════════════════
+# PANEL ADMIN (siempre visible en el cuerpo principal)
+# ══════════════════════════════════════════════════════
+with st.expander("🔐 Acceso Administrador · Cargar Datos", expanded=False):
+    if not st.session_state.admin_ok:
+        col_a, col_b, col_c = st.columns([2, 2, 1])
+        adm_u = col_a.text_input("Usuario",    key="adm_u2", placeholder="admin")
+        adm_p = col_b.text_input("Contraseña", key="adm_p2", type="password", placeholder="••••••••")
+        col_c.markdown("<br>", unsafe_allow_html=True)
+        if col_c.button("Ingresar", key="adm_btn2", use_container_width=True):
+            if adm_u == "admin" and adm_p == "admin2025":
+                st.session_state.admin_ok = True
+                st.rerun()
+            else:
+                st.error("Usuario o contraseña incorrectos.")
+    else:
+        st.success("✅ Sesión activa · admin")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.markdown("**🏬 Mayoristas**")
+            may_file = st.file_uploader("", type=["xlsx","csv"], key="up_may2",
+                                         label_visibility="collapsed")
+            st.download_button("⬇️ Plantilla", TMPL_MAY, "plantilla_mayoristas.csv",
+                                mime="text/csv", key="dl_may2")
+        with col2:
+            st.markdown("**🏪 TPF**")
+            tpf_file = st.file_uploader("", type=["xlsx","csv"], key="up_tpf2",
+                                          label_visibility="collapsed")
+            st.download_button("⬇️ Plantilla", TMPL_TPF, "plantilla_tpf.csv",
+                                mime="text/csv", key="dl_tpf2")
+        with col3:
+            st.markdown("**🏪 TEX**")
+            tex_file = st.file_uploader("", type=["xlsx","csv"], key="up_tex2",
+                                         label_visibility="collapsed")
+            st.download_button("⬇️ Plantilla", TMPL_TEX, "plantilla_tex.csv",
+                                mime="text/csv", key="dl_tex2")
+        with col4:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🔒 Cerrar sesión", key="adm_out2", use_container_width=True):
+                st.session_state.admin_ok = False
+                st.rerun()
+
+# ══════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════
 tab1, tab2, tab3 = st.tabs(["🏬  MAYORISTAS","🏪  TPF","🏪  TEX"])
