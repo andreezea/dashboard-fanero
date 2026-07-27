@@ -725,14 +725,11 @@ def load_uploaded(file, required_cols:list[str]) -> pd.DataFrame|None:
 # ══════════════════════════════════════════════════════
 # SESIÓN — ESTADO ADMIN Y DATOS CARGADOS
 # ══════════════════════════════════════════════════════
-if "admin_ok" not in st.session_state:
-    st.session_state.admin_ok = False
-if "df_may_up" not in st.session_state:
-    st.session_state.df_may_up = None
-if "df_tpf_up" not in st.session_state:
-    st.session_state.df_tpf_up = None
-if "df_tex_up" not in st.session_state:
-    st.session_state.df_tex_up = None
+for _k, _v in [("admin_ok", False),
+               ("df_may_up", None), ("df_tpf_up", None), ("df_tex_up", None),
+               ("_id_may", None),   ("_id_tpf", None),   ("_id_tex", None)]:
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
 
 
 # ══════════════════════════════════════════════════════
@@ -747,7 +744,7 @@ df_tex_base = st.session_state.df_tex_up if st.session_state.df_tex_up is not No
 
 
 # ══════════════════════════════════════════════════════
-# HEADER GLOBAL + BOTÓN ADMIN (☰)
+# HEADER GLOBAL + BOTÓN LOGIN (☰)
 # ══════════════════════════════════════════════════════
 now_str = datetime.now().strftime("%d %b %Y · %H:%M")
 hdr_col, adm_col = st.columns([11, 1])
@@ -766,77 +763,82 @@ with hdr_col:
 with adm_col:
     st.markdown("<div style='margin-top:1.1rem'></div>", unsafe_allow_html=True)
     with st.popover("☰", use_container_width=True):
-        st.markdown("### 🔐 Administrador")
+        st.markdown("### 🔐 Acceso Admin")
         if not st.session_state.admin_ok:
-            adm_user = st.text_input("Usuario", key="adm_user",
-                                      placeholder="Ingresa tu usuario")
-            adm_pwd  = st.text_input("Contraseña", type="password", key="adm_pwd",
-                                      placeholder="Contraseña")
+            adm_user = st.text_input("Usuario", key="adm_user", placeholder="Usuario")
+            adm_pwd  = st.text_input("Contraseña", type="password", key="adm_pwd")
             if st.button("🔓 Ingresar", key="adm_btn", use_container_width=True):
                 if adm_user == "admin" and adm_pwd == "admin2025":
                     st.session_state.admin_ok = True
                     st.rerun()
                 else:
-                    st.error("Usuario o contraseña incorrectos.")
-            st.caption("Solo el administrador puede cargar datos.")
+                    st.error("Credenciales incorrectas.")
         else:
-            st.success("✅ Sesión activa · admin")
+            st.success("✅ Admin activo")
             if st.button("🔒 Cerrar sesión", key="adm_logout", use_container_width=True):
                 st.session_state.admin_ok = False
                 st.rerun()
 
-            st.markdown("---")
-            st.markdown("#### 🏬 Mayoristas")
-            may_file = st.file_uploader("Mayoristas (.csv / .xlsx)",
-                                         type=["xlsx","csv"], key="up_may",
-                                         help=f"Columnas requeridas: {', '.join(COLS_MAY_REQUIRED)}")
-            if may_file:
-                _up = load_uploaded(may_file, COLS_MAY_REQUIRED)
-                if _up is not None:
-                    fan = (_up.groupby(
-                               ["Fecha","Mes","Año","Canal","SubCanal","Habilitador","Producto"],
-                               as_index=False)
-                             .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum")))
-                    fan["Departamento"]  = "Fanero"
-                    fan["Cumplimiento"]  = (fan["Ventas"]/fan["Cuota"]*100).round(1)
-                    st.session_state.df_may_up = pd.concat([_up, fan], ignore_index=True)
-                    st.success(f"✅ Mayoristas cargado · {len(_up):,} filas · "
-                               f"{_up['Mes'].nunique()} meses")
-                    st.rerun()
-            st.download_button("⬇️ Plantilla Mayoristas", TMPL_MAY,
+# ══════════════════════════════════════════════════════
+# PANEL DE CARGA DE DATOS (solo si admin — fuera del popover)
+# ══════════════════════════════════════════════════════
+def _procesar_upload(file, req_cols, ss_key, id_key, es_may=False):
+    """Procesa un archivo subido solo si es nuevo (detectado por file_id)."""
+    if file is None:
+        return
+    fid = getattr(file, "file_id", id(file))
+    if fid == st.session_state.get(id_key):
+        return  # ya procesado, no repetir
+    _up = load_uploaded(file, req_cols)
+    if _up is None:
+        return
+    if es_may:
+        fan = (_up.groupby(
+                   ["Fecha","Mes","Año","Canal","SubCanal","Habilitador","Producto"],
+                   as_index=False)
+                 .agg(Ventas=("Ventas","sum"), Cuota=("Cuota","sum")))
+        fan["Departamento"] = "Fanero"
+        fan["Cumplimiento"] = (fan["Ventas"] / fan["Cuota"] * 100).round(1)
+        st.session_state[ss_key] = pd.concat([_up, fan], ignore_index=True)
+        st.toast(f"✅ Cargado: {len(_up):,} filas · {_up['Mes'].nunique()} meses")
+    else:
+        st.session_state[ss_key] = _up
+        st.toast(f"✅ Cargado: {len(_up):,} filas")
+    st.session_state[id_key] = fid
+    st.rerun()
+
+if st.session_state.admin_ok:
+    with st.expander("📥 Carga de datos", expanded=False):
+        ua1, ua2, ua3 = st.columns(3)
+        with ua1:
+            st.markdown("**🏬 Mayoristas**")
+            f_may = st.file_uploader("CSV / XLSX", type=["xlsx","csv"],
+                                      key="up_may", label_visibility="collapsed")
+            st.download_button("⬇️ Plantilla", TMPL_MAY,
                                 "plantilla_mayoristas.csv", mime="text/csv", key="dl_may")
-
-            st.markdown("---")
-            st.markdown("#### 🏪 TPF")
-            tpf_file = st.file_uploader("TPF (.csv / .xlsx)",
-                                          type=["xlsx","csv"], key="up_tpf",
-                                          help=f"Columnas: {', '.join(COLS_TPF)}")
-            if tpf_file:
-                _up = load_uploaded(tpf_file, COLS_TPF)
-                if _up is not None:
-                    st.session_state.df_tpf_up = _up
-                    st.success("TPF cargado ✓")
-            st.download_button("⬇️ Plantilla TPF", TMPL_TPF,
+            if st.session_state.df_may_up is not None:
+                st.success(f"✅ {len(st.session_state.df_may_up):,} filas cargadas")
+        with ua2:
+            st.markdown("**🏪 TPF**")
+            f_tpf = st.file_uploader("CSV / XLSX", type=["xlsx","csv"],
+                                      key="up_tpf", label_visibility="collapsed")
+            st.download_button("⬇️ Plantilla", TMPL_TPF,
                                 "plantilla_tpf.csv", mime="text/csv", key="dl_tpf")
-
-            st.markdown("---")
-            st.markdown("#### 🏪 TEX")
-            tex_file = st.file_uploader("TEX (.csv / .xlsx)",
-                                         type=["xlsx","csv"], key="up_tex",
-                                         help=f"Columnas: {', '.join(COLS_TEX)}")
-            if tex_file:
-                _up = load_uploaded(tex_file, COLS_TEX)
-                if _up is not None:
-                    st.session_state.df_tex_up = _up
-                    st.success("TEX cargado ✓")
-            st.download_button("⬇️ Plantilla TEX", TMPL_TEX,
+            if st.session_state.df_tpf_up is not None:
+                st.success(f"✅ {len(st.session_state.df_tpf_up):,} filas cargadas")
+        with ua3:
+            st.markdown("**🏪 TEX**")
+            f_tex = st.file_uploader("CSV / XLSX", type=["xlsx","csv"],
+                                      key="up_tex", label_visibility="collapsed")
+            st.download_button("⬇️ Plantilla", TMPL_TEX,
                                 "plantilla_tex.csv", mime="text/csv", key="dl_tex")
+            if st.session_state.df_tex_up is not None:
+                st.success(f"✅ {len(st.session_state.df_tex_up):,} filas cargadas")
 
-            st.markdown("---")
-            may_st = "✅ Reales" if st.session_state.df_may_up is not None else "🔵 Demo"
-            tpf_st = "✅ Reales" if st.session_state.df_tpf_up is not None else "🔵 Demo"
-            tex_st = "✅ Reales" if st.session_state.df_tex_up is not None else "🔵 Demo"
-            st.caption(f"May: {may_st} · TPF: {tpf_st} · TEX: {tex_st}")
+    # Procesar archivos nuevos (solo si realmente cambiaron)
+    _procesar_upload(f_may, COLS_MAY_REQUIRED, "df_may_up", "_id_may", es_may=True)
+    _procesar_upload(f_tpf, COLS_TPF,          "df_tpf_up", "_id_tpf")
+    _procesar_upload(f_tex, COLS_TEX,          "df_tex_up", "_id_tex")
 
 
 # ══════════════════════════════════════════════════════
